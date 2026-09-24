@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- NotiFy offline downloads: narrowly scoped to pinned and smart buckets -->
+    <files-path name="offline_pinned" path="notify_offline/pinned" />
+    <files-path name="offline_smart" path="notify_offline/smart" />
+</paths>

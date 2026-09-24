@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="notify_background">#121212</color>
+    <color name="notify_surface">#181818</color>
+    <color name="notify_surface_variant">#242424</color>
+    <color name="notify_primary">#10B981</color>
+    <color name="notify_on_primary">#000000</color>
+    <color name="notify_text_primary">#FFFFFF</color>
+    <color name="notify_text_secondary">#B3B3B3</color>
+</resources>
