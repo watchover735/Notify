@@ -27,9 +27,7 @@ import com.notify.download.matcher.TrackMatchEngine
 import com.notify.download.matcher.YouTubeCandidate
 import com.notify.download.matcher.YtDlpYouTubeSearchProvider
 import com.notify.download.spotify.SpotifyTrackMetadata
-import com.yausername.youtubedl_android.YoutubeDL
-import com.yausername.youtubedl_android.YoutubeDLException
-import com.yausername.youtubedl_android.YoutubeDLRequest
+
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -744,96 +742,44 @@ class TrackDownloadWorker(
         downloadId: String
     ): DownloadOutcome = coroutineScope {
         val ytdlpStartMs = System.currentTimeMillis()
-        // ── YTDLP_FORMAT_START ───────────────────────────────────────────────
         Log.i(TAG, "YTDLP_FORMAT_START trackId=$trackId format=$format")
 
-        var lastProgressEpochMs = System.currentTimeMillis()
-        val isStalled = java.util.concurrent.atomic.AtomicBoolean(false)
-        val taskId = "dl_${trackId.replace(Regex("[^a-zA-Z0-9_-]"), "_")}_${UUID.randomUUID()}"
-
-        val watchdogJob = launch(Dispatchers.Default) {
-            while (isActive) {
-                delay(5_000L)
-                val elapsed = System.currentTimeMillis() - lastProgressEpochMs
-                if (elapsed > PROGRESS_STALL_TIMEOUT_MS) {
-                    Log.w(TAG, "Download stalled for $trackId ($elapsed ms without progress). Destroying process $taskId")
-                    isStalled.set(true)
-                    try {
-                        YoutubeDL.getInstance().destroyProcessById(taskId)
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Failed to destroy stalled process $taskId: ${e.message}")
-                    }
-                    break
-                }
-            }
-        }
-
         try {
-            val request = YoutubeDLRequest(canonicalUrl).apply {
-                addOption("-f", format)
-                addOption("--no-playlist")
-                addOption("--no-check-certificates")
-                addOption("--extractor-args", "youtube:player_client=ios,tv,mweb")
-                addOption("-o", partFile.absolutePath)
-                addOption("--no-embed-metadata")
-                addOption("--no-embed-thumbnail")
-            }
+            val directOutcome = tryDirectStreamingDownload(
+                trackId = trackId,
+                canonicalUrl = canonicalUrl,
+                partFile = partFile,
+                queueDao = queueDao,
+                downloadDao = downloadDao,
+                downloadId = downloadId,
+                trackTitle = trackId,
+                trackArtist = "Unknown"
+            )
 
-            val response = YoutubeDL.getInstance().execute(request, taskId) { progress, _, _ ->
-                val now = System.currentTimeMillis()
-                lastProgressEpochMs = now
-                val percent = progress.toInt().coerceIn(0, 99)
-                kotlinx.coroutines.runBlocking {
-                    queueDao.updateProgress(trackId, DownloadQueueStatus.DOWNLOADING, percent, now)
-                    downloadDao.updateProgress(downloadId, OfflineDownloadStatus.DOWNLOADING, percent, now)
-                }
+            val elapsedMs = System.currentTimeMillis() - ytdlpStartMs
+            if (directOutcome is DownloadOutcome.Success) {
+                Log.i(TAG, "YTDLP_FORMAT_COMPLETE trackId=$trackId format=$format wallElapsedMs=$elapsedMs")
+                directOutcome
+            } else {
+                Log.w(TAG, "YTDLP_FORMAT_FAILED trackId=$trackId format=$format elapsedMs=$elapsedMs")
+                DownloadOutcome.TransientNetworkError("Format download failed or unavailable")
             }
-
-            watchdogJob.cancel()
-            if (isStalled.get()) {
-                val stalledElapsedMs = System.currentTimeMillis() - ytdlpStartMs
-                Log.w(TAG, "YTDLP_FORMAT_FAILED trackId=$trackId format=$format reason=stalled elapsedMs=$stalledElapsedMs")
-                return@coroutineScope DownloadOutcome.TransientNetworkError("Download stalled (no progress for 90s)")
-            }
-
-            // ── YTDLP_FORMAT_COMPLETE ────────────────────────────────────────
-            val ytdlpElapsedMs = System.currentTimeMillis() - ytdlpStartMs
-            Log.i(TAG, "YTDLP_FORMAT_COMPLETE trackId=$trackId format=$format ytdlpElapsedMs=${response.elapsedTime} wallElapsedMs=$ytdlpElapsedMs")
-            DownloadOutcome.Success(partFile)
-        } catch (e: YoutubeDLException) {
-            watchdogJob.cancel()
-            val ytdlpElapsedMs = System.currentTimeMillis() - ytdlpStartMs
-            if (isStalled.get()) {
-                Log.w(TAG, "YTDLP_FORMAT_FAILED trackId=$trackId format=$format reason=stalled elapsedMs=$ytdlpElapsedMs")
-                return@coroutineScope DownloadOutcome.TransientNetworkError("Download stalled (no progress for 90s)")
-            }
-            val msg = e.message ?: "yt-dlp error"
-            Log.e(TAG, "YTDLP_FORMAT_FAILED trackId=$trackId format=$format elapsedMs=$ytdlpElapsedMs exception=YoutubeDLException message=$msg")
-            classifyError(msg)
         } catch (e: SocketTimeoutException) {
-            watchdogJob.cancel()
-            val ytdlpElapsedMs = System.currentTimeMillis() - ytdlpStartMs
-            Log.e(TAG, "YTDLP_FORMAT_FAILED trackId=$trackId format=$format elapsedMs=$ytdlpElapsedMs exception=SocketTimeoutException message=${e.message}")
+            val elapsedMs = System.currentTimeMillis() - ytdlpStartMs
+            Log.e(TAG, "YTDLP_FORMAT_FAILED trackId=$trackId format=$format elapsedMs=$elapsedMs exception=SocketTimeoutException message=${e.message}")
             DownloadOutcome.TransientNetworkError("Network timeout: ${e.message}")
         } catch (e: UnknownHostException) {
-            watchdogJob.cancel()
-            val ytdlpElapsedMs = System.currentTimeMillis() - ytdlpStartMs
-            Log.e(TAG, "YTDLP_FORMAT_FAILED trackId=$trackId format=$format elapsedMs=$ytdlpElapsedMs exception=UnknownHostException message=${e.message}")
+            val elapsedMs = System.currentTimeMillis() - ytdlpStartMs
+            Log.e(TAG, "YTDLP_FORMAT_FAILED trackId=$trackId format=$format elapsedMs=$elapsedMs exception=UnknownHostException message=${e.message}")
             DownloadOutcome.TransientNetworkError("Network unavailable: ${e.message}")
         } catch (e: IOException) {
-            watchdogJob.cancel()
-            val ytdlpElapsedMs = System.currentTimeMillis() - ytdlpStartMs
-            Log.e(TAG, "YTDLP_FORMAT_FAILED trackId=$trackId format=$format elapsedMs=$ytdlpElapsedMs exception=IOException message=${e.message}")
+            val elapsedMs = System.currentTimeMillis() - ytdlpStartMs
+            Log.e(TAG, "YTDLP_FORMAT_FAILED trackId=$trackId format=$format elapsedMs=$elapsedMs exception=IOException message=${e.message}")
             DownloadOutcome.TransientNetworkError("Network I/O error: ${e.message}")
         } catch (e: Exception) {
-            watchdogJob.cancel()
-            val ytdlpElapsedMs = System.currentTimeMillis() - ytdlpStartMs
-            if (isStalled.get()) {
-                Log.w(TAG, "YTDLP_FORMAT_FAILED trackId=$trackId format=$format reason=stalled elapsedMs=$ytdlpElapsedMs")
-                return@coroutineScope DownloadOutcome.TransientNetworkError("Download stalled (no progress for 90s)")
-            }
-            val msg = e.message ?: "Unknown error"
-            Log.e(TAG, "YTDLP_FORMAT_FAILED trackId=$trackId format=$format elapsedMs=$ytdlpElapsedMs exception=${e::class.java.simpleName} message=$msg")
+            val elapsedMs = System.currentTimeMillis() - ytdlpStartMs
+            val msg = e.message ?: "Stream download error"
+            Log.e(TAG, "YTDLP_FORMAT_FAILED trackId=$trackId format=$format elapsedMs=$elapsedMs message=$msg")
             classifyError(msg)
         }
     }

@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: notify-ytdlp-backend
+    env: docker
+    dockerfilePath: Dockerfile
+    dockerContext: .
+    plan: free
+    region: singapore # or oregon / frankfurt
+    healthCheckPath: /health
+    autoDeploy: true

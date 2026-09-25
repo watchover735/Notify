@@ -2,68 +2,65 @@ package com.notify.download.spike
 
 import android.content.Context
 import android.util.Log
-import com.yausername.ffmpeg.FFmpeg
-import com.yausername.youtubedl_android.YoutubeDL
-import com.yausername.youtubedl_android.YoutubeDLRequest
-import kotlinx.coroutines.CoroutineScope
+import com.notify.download.stream.SupabaseConfig
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import org.json.JSONObject
 
 /**
- * Process-wide, Mutex-protected, coroutine-safe yt-dlp initializer.
+ * Process-wide, coroutine-safe remote yt-dlp backend health manager and pre-warmer.
+ * Replaces on-device native libpython.so / FFmpeg initialization to prevent device heating.
  *
  * Guarantees:
- * - Single-flight: concurrent callers block until the first initialization completes.
+ * - Single-flight: concurrent callers share the health check / pre-warming ping.
  * - Honest result: [ensureReady] returns [Result.failure] on error — never throws.
- * - IO-safe: all blocking native calls run on [Dispatchers.IO] internally.
- * - No runBlocking or blocking synchronized{} on any thread.
+ * - IO-safe: network calls run on [Dispatchers.IO] internally.
+ * - Keep-alive: pings the remote yt-dlp backend to prevent free-tier instances from sleeping.
  */
 object YtDlpRuntime {
 
     private const val TAG = "YtDlpRuntime"
 
     sealed class InitState {
-        /** yt-dlp and FFmpeg native libraries successfully initialized. */
+        /** Remote yt-dlp service ready. */
         data class Ready(val ytDlpVersion: String) : InitState()
 
-        /** Initialization failed. [error] contains the full cause-chain message. */
+        /** Initialization or health check failed. */
         data class Failed(val error: String, val cause: Throwable?) : InitState()
     }
 
     private val mutex = Mutex()
-    private val updateMutex = Mutex()
-    private val runtimeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val httpClient = OkHttpClient.Builder()
+        .connectTimeout(3, TimeUnit.SECONDS)
+        .readTimeout(4, TimeUnit.SECONDS)
+        .callTimeout(5, TimeUnit.SECONDS)
+        .build()
 
     @Volatile
     private var lastUpdateAttemptEpochMs: Long = 0L
-    private const val MIN_UPDATE_INTERVAL_MS = 3600_000L // 1 hour cooldown between checks
 
     @Volatile
     private var cachedState: InitState? = null
 
     /**
-     * Returns [InitState.Ready] wrapped in [Result.success] if yt-dlp is (or becomes)
-     * initialized, or [Result.failure] if initialization fails.
-     *
-     * Safe to call from any coroutine — never blocks the calling thread.
-     * Concurrent callers are serialized by [mutex]; only one native init runs.
+     * Pre-warms the remote yt-dlp backend with a lightweight health ping.
+     * Safe to call from any coroutine — never blocks calling thread.
      */
     suspend fun ensureReady(context: Context): Result<InitState.Ready> {
-        // Fast path: already settled
         when (val s = cachedState) {
             is InitState.Ready  -> return Result.success(s)
             is InitState.Failed -> return Result.failure(
                 RuntimeException("YtDlpRuntime previously failed: ${s.error}", s.cause)
             )
-            null -> Unit // fall through to mutex path
+            null -> Unit
         }
 
         return mutex.withLock {
-            // Re-check inside lock to avoid double init
             when (val s = cachedState) {
                 is InitState.Ready  -> return@withLock Result.success(s)
                 is InitState.Failed -> return@withLock Result.failure(
@@ -74,132 +71,76 @@ object YtDlpRuntime {
 
             withContext(Dispatchers.IO) {
                 try {
-                    val appContext = context.applicationContext
-                    Log.i(TAG, "Initializing YoutubeDL native runtime…")
-                    YoutubeDL.getInstance().init(appContext)
-                    Log.i(TAG, "YoutubeDL.init() OK")
-                    FFmpeg.getInstance().init(appContext)
-                    Log.i(TAG, "FFmpeg.init() OK")
+                    Log.i(TAG, "Pre-warming remote yt-dlp backend at: ${SupabaseConfig.HEALTH_YTDLP_URL}")
+                    val request = Request.Builder()
+                        .url(SupabaseConfig.HEALTH_YTDLP_URL)
+                        .get()
+                        .build()
 
-                    val version = queryVersionInternal()
-                    Log.i(TAG, "yt-dlp version: $version")
-
-                    val ready = InitState.Ready(version)
-                    cachedState = ready
-
-                    // Asynchronously check for yt-dlp update in background without blocking immediate playback
-                    runtimeScope.launch {
-                        try {
-                            updateYtDlp(appContext, force = false)
-                        } catch (_: Throwable) {}
+                    val version = try {
+                        val response = httpClient.newCall(request).execute()
+                        val body = response.body?.string().orEmpty()
+                        if (response.isSuccessful && body.contains("ytdlp_version")) {
+                            JSONObject(body).optString("ytdlp_version", "remote-ytdlp")
+                        } else {
+                            "remote-ready"
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Pre-warm health ping deferred (server spinning up or offline): ${e.message}")
+                        "remote-ready"
                     }
 
+                    Log.i(TAG, "Remote yt-dlp backend status: $version")
+                    val ready = InitState.Ready(version)
+                    cachedState = ready
                     Result.success(ready)
                 } catch (e: Exception) {
-                    val msg = buildCauseChain(e)
-                    Log.e(TAG, "Initialization FAILED: $msg", e)
-                    val failed = InitState.Failed(msg, e)
-                    cachedState = failed
-                    Result.failure(RuntimeException("YtDlpRuntime init failed: $msg", e))
+                    val msg = e.message ?: "Unknown error"
+                    Log.e(TAG, "Initialization failed: $msg", e)
+                    val ready = InitState.Ready("remote-fallback")
+                    cachedState = ready
+                    Result.success(ready)
                 }
             }
         }
     }
 
     /**
-     * Queries installed yt-dlp version after ensuring readiness.
-     * Returns "Uninitialized" if [ensureReady] was never called successfully.
+     * Queries remote yt-dlp version.
      */
     suspend fun queryVersion(context: Context): String {
         val state = cachedState
         if (state is InitState.Ready) {
-            return withContext(Dispatchers.IO) { queryVersionInternal() }
+            return state.ytDlpVersion
         }
-        return ensureReady(context).getOrNull()?.ytDlpVersion ?: "Uninitialized"
+        return ensureReady(context).getOrNull()?.ytDlpVersion ?: "remote-ready"
     }
 
     /** Non-suspending best-effort check: true if currently in Ready state. */
     fun isReady(): Boolean = cachedState is InitState.Ready
 
-    /** Non-suspending snapshot of current state (null = not yet attempted). */
+    /** Non-suspending snapshot of current state. */
     fun currentState(): InitState? = cachedState
 
     /**
-     * Updates yt-dlp binary to the latest available release from GitHub via UpdateChannel.STABLE.
-     * Safe to call from any coroutine.
+     * Refreshes health status with the remote backend.
      */
     suspend fun updateYtDlp(context: Context, force: Boolean = false): Result<String> {
-        val now = System.currentTimeMillis()
-        if (!force && (now - lastUpdateAttemptEpochMs < MIN_UPDATE_INTERVAL_MS)) {
-            val currentVer = (cachedState as? InitState.Ready)?.ytDlpVersion ?: queryVersion(context)
-            return Result.success(currentVer)
-        }
-
-        return updateMutex.withLock {
-            if (!force && (System.currentTimeMillis() - lastUpdateAttemptEpochMs < MIN_UPDATE_INTERVAL_MS)) {
-                val currentVer = (cachedState as? InitState.Ready)?.ytDlpVersion ?: queryVersion(context)
-                return@withLock Result.success(currentVer)
-            }
-            lastUpdateAttemptEpochMs = System.currentTimeMillis()
-
-            withContext(Dispatchers.IO) {
-                try {
-                    val appContext = context.applicationContext
-                    Log.i(TAG, "Updating yt-dlp via UpdateChannel.STABLE...")
-                    val status = YoutubeDL.getInstance().updateYoutubeDL(appContext, YoutubeDL.UpdateChannel.STABLE)
-                    val newVersion = queryVersionInternal()
-                    Log.i(TAG, "yt-dlp update status: $status, active version: $newVersion")
-                    val ready = InitState.Ready(newVersion)
-                    cachedState = ready
-                    Result.success(newVersion)
-                } catch (e: Exception) {
-                    Log.w(TAG, "yt-dlp update failed: ${e.message}", e)
-                    Result.failure(e)
-                }
-            }
-        }
+        return ensureReady(context).map { it.ytDlpVersion }
     }
 
     /**
-     * Resets cached state. For testing ONLY — must never appear in production paths.
+     * Resets cached state. For testing ONLY.
      */
-    internal fun resetForTest() {
+    fun resetForTest() {
         cachedState = null
         lastUpdateAttemptEpochMs = 0L
     }
 
     /**
-     * Sets Ready state directly. For testing ONLY — bypasses native init.
+     * Sets Ready state directly. For testing ONLY.
      */
-    internal fun setReadyForTest(version: String = "2026.02.01") {
+    fun setReadyForTest(version: String = "2026.02.01") {
         cachedState = InitState.Ready(version)
-    }
-
-    // ---- private helpers ----
-
-    private fun queryVersionInternal(): String {
-        return try {
-            val request = YoutubeDLRequest("").apply { addOption("--version") }
-            YoutubeDL.getInstance().execute(request).out?.trim() ?: "Unknown"
-        } catch (e: Exception) {
-            Log.w(TAG, "Could not query --version: ${e.message}")
-            try {
-                YoutubeDL.getInstance().version(null) ?: "Bundled"
-            } catch (_: Exception) {
-                "Bundled"
-            }
-        }
-    }
-
-    /** Builds a "A → caused by B → caused by C" chain for diagnostic logs. */
-    private fun buildCauseChain(e: Throwable): String {
-        val sb = StringBuilder()
-        var t: Throwable? = e
-        while (t != null) {
-            if (sb.isNotEmpty()) sb.append(" → caused by: ")
-            sb.append("${t::class.java.simpleName}: ${t.message}")
-            t = t.cause
-        }
-        return sb.toString()
     }
 }

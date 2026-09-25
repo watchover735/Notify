@@ -3,12 +3,9 @@ package com.notify.download.stream
 import android.content.Context
 import android.util.Log
 import com.notify.core.model.ResolvedStream
-import com.notify.download.spike.YtDlpRuntime
-import com.yausername.youtubedl_android.YoutubeDL
-import com.yausername.youtubedl_android.YoutubeDLException
-import com.yausername.youtubedl_android.YoutubeDLRequest
-import com.yausername.youtubedl_android.YoutubeDLResponse
 import java.io.IOException
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.Dispatchers
@@ -16,7 +13,11 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
-import java.util.concurrent.TimeoutException
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
 
 /**
  * Interface contract for resolving audio stream URLs from YouTube canonical URLs.
@@ -71,26 +72,36 @@ class FakeAudioStreamResolver(
 }
 
 /**
- * Resolves temporary in-memory audio stream URLs for online playback via yt-dlp.
+ * Resolves temporary in-memory audio stream URLs via a remote yt-dlp microservice.
+ * INVARIANT: Heavy yt-dlp / Python / ffmpeg execution is offloaded to the remote server to eliminate phone heating.
  * INVARIANT: Signed stream URLs are NEVER persisted to Room, TrackEntity, or SharedPreferences.
- * INVARIANT: Spotify URLs are NEVER passed to YoutubeDLRequest.
+ * INVARIANT: Spotify URLs are NEVER passed to stream resolver.
  */
-class OnlineStreamResolver(
-    private val context: Context,
-    private val ytDlpExecutor: (YoutubeDLRequest) -> YoutubeDLResponse = { req ->
-        YoutubeDL.getInstance().execute(req)
-    }
+class OnlineStreamResolver @JvmOverloads constructor(
+    private val context: Context? = null,
+    private val endpointUrl: String = SupabaseConfig.RESOLVE_YTDLP_URL,
+    private val httpClient: OkHttpClient = defaultHttpClient
 ) : AudioStreamResolver {
 
     companion object {
         private const val TAG = "OnlineStreamResolver"
-        private val ytDlpDispatcher = Dispatchers.IO.limitedParallelism(1)
+        private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
+
+        private val defaultHttpClient: OkHttpClient by lazy {
+            OkHttpClient.Builder()
+                .connectTimeout(6, TimeUnit.SECONDS)
+                .readTimeout(18, TimeUnit.SECONDS)
+                .callTimeout(20, TimeUnit.SECONDS)
+                .retryOnConnectionFailure(true)
+                .build()
+        }
+
         private val activePrefetchJob = AtomicReference<Job?>(null)
 
-        // Prioritized format spec: pure m4a audio preferred, any pure audio second, best muxed as safety net
+        // Prioritized format spec (retained for backward compatibility and server parity)
         const val FORMAT_SPEC = "bestaudio[ext=m4a]/bestaudio/best"
 
-        // Alternate client configurations to avoid PO Token requirements and SABR streaming
+        // Alternate client configurations
         val CLIENT_PROFILES = listOf(
             "youtube:player_client=tv_embedded,visionos",
             "youtube:player_client=android",
@@ -98,13 +109,12 @@ class OnlineStreamResolver(
             "youtube:player_client=all"
         )
 
-        // Dedicated execution timeout starting only AFTER acquiring the single-slot dispatcher.
-        // Queue wait time is excluded so stacked or prefetch tracks do not expire prematurely.
+        // Dedicated execution timeout starting only AFTER acquiring the dispatch slot.
         const val YTDLP_EXECUTION_TIMEOUT_MS = 20_000L
 
         /**
-         * Cancels any active background prefetch resolution on ytDlpDispatcher so foreground
-         * user taps can obtain the execution slot immediately without queuing delay.
+         * Cancels any active background prefetch resolution so foreground
+         * user taps can obtain execution slots immediately.
          */
         fun cancelActivePrefetch() {
             activePrefetchJob.getAndSet(null)?.let {
@@ -158,7 +168,7 @@ class OnlineStreamResolver(
         }
 
         return try {
-            withContext(ytDlpDispatcher) {
+            withContext(Dispatchers.IO) {
                 // Enforce safety invariant: Spotify URLs must never be passed to yt-dlp
                 if (canonicalYoutubeUrl.contains("spotify.com") || canonicalYoutubeUrl.contains("spotify.link")) {
                     return@withContext Result.failure(
@@ -166,148 +176,112 @@ class OnlineStreamResolver(
                     )
                 }
 
-                // Dedicated execution timeout: starts counting ONLY when ytDlpDispatcher slot is acquired
                 withTimeout(YTDLP_EXECUTION_TIMEOUT_MS) {
-                    val initResult = YtDlpRuntime.ensureReady(context)
-                    if (initResult.isFailure) {
-                        val err = initResult.exceptionOrNull()?.message ?: "YtDlpRuntime init failed"
-                        Log.e(TAG, "Cannot resolve stream: yt-dlp not ready: $err")
-                        return@withTimeout Result.failure(IllegalStateException(err))
+                    val videoId = extractVideoId(canonicalYoutubeUrl) ?: ""
+                    Log.d(TAG, "Resolving remote audio stream for: $canonicalYoutubeUrl (id=$videoId)")
+
+                    val payload = JSONObject().apply {
+                        put("videoId", videoId)
+                        put("canonicalUrl", canonicalYoutubeUrl)
                     }
-                    Log.d(TAG, "Resolving direct audio stream for: $canonicalYoutubeUrl")
 
-                var lastException: Throwable? = null
-                var streamUrl: String? = null
-                var successfulClient: String? = null
-                var elapsedTimeMs: Long = 0L
+                    val request = Request.Builder()
+                        .url(endpointUrl)
+                        .post(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
+                        .build()
 
-                for ((index, clientArg) in CLIENT_PROFILES.withIndex()) {
-                    val attemptStart = System.currentTimeMillis()
-                    Log.i(TAG, "CLIENT_ATTEMPT_START client=$clientArg attempt=${index + 1}/${CLIENT_PROFILES.size}")
-                    try {
-                        val request = YoutubeDLRequest(canonicalYoutubeUrl).apply {
-                            addOption("-g") // Print direct stream URL
-                            addOption("-f", FORMAT_SPEC)
-                            addOption("--no-playlist")
-                            addOption("--no-check-certificates")
-                            addOption("--extractor-args", clientArg)
-                        }
-
-                        val response = ytDlpExecutor(request)
-                        val elapsed = System.currentTimeMillis() - attemptStart
-                        val extractedUrl = response.out?.lines()?.firstOrNull { it.startsWith("http://") || it.startsWith("https://") }?.trim()
-
-                        if (!extractedUrl.isNullOrBlank()) {
-                            Log.i(TAG, "CLIENT_ATTEMPT_COMPLETE client=$clientArg outcome=SUCCESS elapsedMs=$elapsed")
-                            streamUrl = extractedUrl
-                            successfulClient = clientArg
-                            elapsedTimeMs = response.elapsedTime
-                            break
-                        } else {
-                            Log.w(TAG, "CLIENT_ATTEMPT_COMPLETE client=$clientArg outcome=FAILED elapsedMs=$elapsed reason=no_stream_url; trying fallback")
-                        }
-                    } catch (e: YoutubeDLException) {
-                        val elapsed = System.currentTimeMillis() - attemptStart
-                        lastException = e
-                        Log.w(TAG, "CLIENT_ATTEMPT_COMPLETE client=$clientArg outcome=FAILED elapsedMs=$elapsed error=${e.message}; trying fallback")
-                        if (isPermanentVideoError(e.message)) {
-                            Log.w(TAG, "PERMANENT_VIDEO_ERROR detected: \"${e.message}\". Aborting remaining client attempts immediately.")
-                            break
-                        }
+                    val startTime = System.currentTimeMillis()
+                    val response = try {
+                        httpClient.newCall(request).execute()
                     } catch (e: Exception) {
-                        val elapsed = System.currentTimeMillis() - attemptStart
-                        lastException = e
-                        Log.w(TAG, "CLIENT_ATTEMPT_COMPLETE client=$clientArg outcome=FAILED elapsedMs=$elapsed unexpected=${e.message}; trying fallback")
-                        if (isPermanentVideoError(e.message)) {
-                            Log.w(TAG, "PERMANENT_VIDEO_ERROR detected: \"${e.message}\". Aborting remaining client attempts immediately.")
-                            break
-                        }
+                        Log.e(TAG, "Remote yt-dlp backend connection failed: ${e.message}")
+                        return@withTimeout Result.failure(
+                            IOException("Remote yt-dlp backend unavailable: ${e.message}", e)
+                        )
                     }
-                }
 
-                val isPermanent = isPermanentVideoError(lastException?.message)
+                    val elapsed = System.currentTimeMillis() - startTime
+                    val responseBody = response.body?.string().orEmpty()
 
-                // Fallback recovery: if all client profiles failed, try updating yt-dlp binary if possible (skip if permanent error)
-                if (streamUrl.isNullOrBlank() && !isPermanent) {
-                    Log.i(TAG, "All client profiles failed for $canonicalYoutubeUrl. Attempting yt-dlp update recovery...")
-                    val updateResult = YtDlpRuntime.updateYtDlp(context, force = true)
-                    if (updateResult.isSuccess) {
-                        try {
-                            val recoveryProfile = CLIENT_PROFILES.first()
-                            val request = YoutubeDLRequest(canonicalYoutubeUrl).apply {
-                                addOption("-g")
-                                addOption("-f", FORMAT_SPEC)
-                                addOption("--no-playlist")
-                                addOption("--no-check-certificates")
-                                addOption("--extractor-args", recoveryProfile)
-                            }
-                            val response = ytDlpExecutor(request)
-                            val extractedUrl = response.out?.lines()?.firstOrNull { it.startsWith("http://") || it.startsWith("https://") }?.trim()
-                            if (!extractedUrl.isNullOrBlank()) {
-                                streamUrl = extractedUrl
-                                successfulClient = "$recoveryProfile (post-update)"
-                                elapsedTimeMs = response.elapsedTime
-                            }
-                        } catch (e: Exception) {
-                            lastException = e
-                        }
+                    if (!response.isSuccessful || responseBody.isBlank()) {
+                        Log.w(TAG, "Remote yt-dlp backend HTTP ${response.code}: $responseBody")
+                        return@withTimeout Result.failure(
+                            IOException("Remote yt-dlp returned HTTP ${response.code}: $responseBody")
+                        )
                     }
-                } else if (isPermanent) {
-                    Log.i(TAG, "Permanent video error encountered. Skipping yt-dlp update recovery.")
-                }
 
-                if (streamUrl.isNullOrBlank()) {
-                    val rawErr = lastException?.message.orEmpty()
-                    val errorMsg = if (isPermanent) {
-                        "Video is unavailable or unplayable in your region ($rawErr)"
+                    val json = try {
+                        JSONObject(responseBody)
+                    } catch (e: Exception) {
+                        return@withTimeout Result.failure(
+                            IOException("Invalid JSON response from remote yt-dlp: $responseBody", e)
+                        )
+                    }
+
+                    val success = json.optBoolean("success", false)
+                    if (!success) {
+                        val rawErr = json.optString("error", "Unknown extraction error")
+                        val isPermanent = isPermanentVideoError(rawErr)
+                        val errorMsg = if (isPermanent) {
+                            "Video is unavailable or unplayable in your region ($rawErr)"
+                        } else {
+                            rawErr.ifBlank { "Remote yt-dlp returned no stream URL" }
+                        }
+                        Log.e(TAG, "Remote yt-dlp stream resolution failed: $errorMsg")
+                        return@withTimeout Result.failure(
+                            IOException("yt-dlp stream resolution failed: $errorMsg")
+                        )
+                    }
+
+                    val streamUrl = json.optString("streamUrl", "").trim()
+                    if (streamUrl.isBlank()) {
+                        return@withTimeout Result.failure(
+                            IOException("Remote yt-dlp returned empty streamUrl")
+                        )
+                    }
+
+                    val formatId = json.optString("formatId", "m4a/audio")
+                    val mimeType = json.optString("mimeType", "audio/mp4")
+                    val container = json.optString("container", "m4a")
+
+                    // Parse expire epoch
+                    val serverExpiresAt = json.optLong("expiresAtEpochMs", 0L)
+                    val expiresAtEpochMs = if (serverExpiresAt > 0L) {
+                        serverExpiresAt
                     } else {
-                        rawErr.ifBlank { "yt-dlp returned no stream URL after trying ${CLIENT_PROFILES.size} client profiles" }
+                        val expireSec = try {
+                            android.net.Uri.parse(streamUrl).getQueryParameter("expire")?.toLongOrNull()
+                        } catch (_: Exception) {
+                            null
+                        }
+                        if (expireSec != null) {
+                            expireSec * 1000L
+                        } else {
+                            System.currentTimeMillis() + StreamUrlCache.DEFAULT_TTL_MS
+                        }
                     }
-                    Log.e(TAG, "yt-dlp stream resolution failed: $errorMsg", lastException)
-                    return@withTimeout Result.failure(
-                        IOException("yt-dlp returned no stream URL for $canonicalYoutubeUrl: $errorMsg", lastException)
+
+                    Log.d(TAG, "Direct stream resolved remotely in ${elapsed}ms: format=$formatId")
+
+                    val resolvedStream = ResolvedStream(
+                        streamUrl = streamUrl,
+                        headers = emptyMap(),
+                        formatId = formatId,
+                        mimeType = mimeType,
+                        container = container,
+                        videoId = videoId.ifBlank { null },
+                        expiresAtEpochMs = expiresAtEpochMs
                     )
-                }
 
-                Log.d(TAG, "Direct stream resolved successfully via $successfulClient (${elapsedTimeMs}ms)")
-
-                val expireSec = try {
-                    android.net.Uri.parse(streamUrl).getQueryParameter("expire")?.toLongOrNull()
-                } catch (_: Exception) {
-                    null
-                }
-
-                val expiresAtEpochMs = if (expireSec != null) {
-                expireSec * 1000L
-            } else {
-                System.currentTimeMillis() + StreamUrlCache.DEFAULT_TTL_MS
-            }
-
-            val videoId = extractVideoId(canonicalYoutubeUrl)
-
-            // Construct in-memory ephemeral ResolvedStream
-            val resolvedStream = ResolvedStream(
-                streamUrl = streamUrl,
-                headers = emptyMap(),
-                formatId = "m4a/audio",
-                mimeType = "audio/mp4",
-                container = "m4a",
-                videoId = videoId,
-                expiresAtEpochMs = expiresAtEpochMs
-            )
-
-            Result.success(resolvedStream)
+                    Result.success(resolvedStream)
                 }
             }
         } catch (e: TimeoutCancellationException) {
-            val timeoutMsg = "yt-dlp execution timed out after ${YTDLP_EXECUTION_TIMEOUT_MS}ms of active execution (queue-wait excluded)"
+            val timeoutMsg = "yt-dlp execution timed out after ${YTDLP_EXECUTION_TIMEOUT_MS}ms of active execution"
             Log.w(TAG, timeoutMsg)
             Result.failure(TimeoutException(timeoutMsg))
-        } catch (e: YoutubeDLException) {
-            Log.e(TAG, "yt-dlp stream resolution failed: ${e.message}", e)
-            Result.failure(IOException("Failed to resolve audio stream: ${e.message}", e))
         } catch (e: Exception) {
-            Log.e(TAG, "Stream resolution error", e)
+            Log.e(TAG, "Stream resolution error: ${e.message}", e)
             Result.failure(e)
         }
     }
