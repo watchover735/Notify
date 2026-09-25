@@ -1,3 +1,12 @@
+---
+title: notify-ytdlp-backend
+emoji: 🎵
+colorFrom: blue
+colorTo: green
+sdk: docker
+app_port: 7860
+---
+
 # NotiFy Remote yt-dlp Audio Stream Backend
 
 Lightweight audio stream extraction microservice for **NotiFy**, offloading CPU-intensive `yt-dlp` execution and FFmpeg processing from Android mobile devices to eliminate phone heating and reduce APK size.

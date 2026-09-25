@@ -18,3 +18,4 @@ capture/
 *.aab
 *.keystore
 *.jks
+scratch/

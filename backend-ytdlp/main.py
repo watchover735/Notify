@@ -327,7 +327,7 @@ if not USE_FASTAPI or __name__ == "__main__":
             logger.info("%s - %s", self.address_string(), format % args)
 
 
-def run_standalone(port: int = 8080):
+def run_standalone(port: int = 7860):
     if USE_FASTAPI:
         import uvicorn
         logger.info("Starting FastAPI server on 0.0.0.0:%d", port)
@@ -348,5 +348,5 @@ def run_standalone(port: int = 8080):
 
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", 8080))
+    port = int(os.getenv("PORT", 7860))
     run_standalone(port)
