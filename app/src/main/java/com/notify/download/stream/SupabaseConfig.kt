@@ -11,15 +11,4 @@ object SupabaseConfig {
     const val RESOLVE_SOUNDCLOUD_URL = "$BASE_URL/resolve-soundcloud"
     const val RESOLVE_DEEZER_URL = "$BASE_URL/resolve-deezer"
     const val RESOLVE_COBALT_URL = "$BASE_URL/resolve-cobalt"
-
-    /**
-     * Remote yt-dlp fallback backend (Render, Railway, Fly.io, or VPS).
-     * Configurable at runtime or test execution.
-     */
-    @Volatile
-    var ytdlpBackendUrl: String = "https://notify-ytdlp.onrender.com"
-
-    val RESOLVE_YTDLP_URL get() = "$ytdlpBackendUrl/resolve-ytdlp"
-    val HEALTH_YTDLP_URL get() = "$ytdlpBackendUrl/health"
-    val SEARCH_YTDLP_URL get() = "$ytdlpBackendUrl/search-ytdlp"
 }

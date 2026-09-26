@@ -2,101 +2,109 @@ package com.notify.download.matcher
 
 import android.content.Context
 import android.util.Log
-import com.notify.download.stream.SupabaseConfig
-import java.util.concurrent.TimeUnit
+import com.notify.download.spike.YtDlpRuntime
+import com.yausername.youtubedl_android.YoutubeDL
+import com.yausername.youtubedl_android.YoutubeDLRequest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 
 /**
  * YtDlpYouTubeSearchProvider:
- * Executes YouTube queries using the remote yt-dlp microservice.
- * Offloads search execution from the mobile device to avoid battery drain and heating.
+ * Executes YouTube queries using yt-dlp's built-in ytsearch extractor.
+ * Passes each argument through YoutubeDLRequest options to avoid raw shell command construction.
  */
-class YtDlpYouTubeSearchProvider @JvmOverloads constructor(
-    private val context: Context? = null,
-    private val endpointUrl: String = SupabaseConfig.SEARCH_YTDLP_URL,
-    private val httpClient: OkHttpClient = defaultClient
+class YtDlpYouTubeSearchProvider(
+    private val context: Context? = null
 ) : YouTubeSearchProvider {
 
     private companion object {
         private const val TAG = "YtDlpSearch"
-        private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
-
-        private val defaultClient: OkHttpClient by lazy {
-            OkHttpClient.Builder()
-                .connectTimeout(5, TimeUnit.SECONDS)
-                .readTimeout(10, TimeUnit.SECONDS)
-                .callTimeout(12, TimeUnit.SECONDS)
-                .build()
-        }
     }
 
     override suspend fun search(query: String, limit: Int): Result<List<YouTubeCandidate>> = withContext(Dispatchers.IO) {
         val sanitizedLimit = limit.coerceIn(1, 20)
+        val searchTarget = "ytsearch$sanitizedLimit:$query"
 
         try {
-            val payload = JSONObject().apply {
-                put("query", query)
-                put("limit", sanitizedLimit)
+            if (context != null) {
+                val initResult = YtDlpRuntime.ensureReady(context)
+                if (initResult.isFailure) {
+                    val err = initResult.exceptionOrNull()?.message ?: "YtDlpRuntime init failed"
+                    Log.e(TAG, "Cannot search: yt-dlp not ready: $err")
+                    return@withContext Result.failure(IllegalStateException(err))
+                }
+                Log.d(TAG, "YtDlpRuntime.Ready, yt-dlp version: ${(initResult.getOrNull())?.ytDlpVersion}")
+            }
+            Log.d(TAG, "Executing safe ytsearch: $searchTarget")
+            val request = YoutubeDLRequest(searchTarget).apply {
+                addOption("--dump-json")
+                addOption("--no-playlist")
+                addOption("--ignore-errors")
+                addOption("--no-check-certificates")
+                addOption("--extractor-args", "youtube:player_client=ios,tv,mweb")
             }
 
-            val request = Request.Builder()
-                .url(endpointUrl)
-                .post(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
-                .build()
+            val response = YoutubeDL.getInstance().execute(request)
+            val output = response.out ?: ""
 
-            val response = try {
-                httpClient.newCall(request).execute()
-            } catch (e: Exception) {
-                Log.w(TAG, "Remote yt-dlp search call failed: ${e.message}")
-                return@withContext Result.failure(e)
-            }
-
-            val body = response.body?.string().orEmpty()
-            if (!response.isSuccessful || body.isBlank()) {
-                return@withContext Result.failure(IllegalStateException("HTTP ${response.code}: $body"))
-            }
-
-            val json = JSONObject(body)
-            if (!json.optBoolean("success", false)) {
-                return@withContext Result.failure(IllegalStateException(json.optString("error", "Search failed")))
-            }
-
-            val results = json.optJSONArray("results") ?: return@withContext Result.success(emptyList())
             val candidates = mutableListOf<YouTubeCandidate>()
+            // yt-dlp prints one JSON object per line for multiple results
+            output.lineSequence().forEach { line ->
+                val trimmed = line.trim()
+                if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+                    try {
+                        val json = JSONObject(trimmed)
+                        val id = json.optString("id")
+                        val title = json.optString("title")
+                        val uploader = json.optString("uploader", json.optString("channel"))
+                        val durationSec = json.optDouble("duration", 0.0)
+                        val viewCount = json.optLong("view_count", -1L).takeIf { it >= 0 }
 
-            for (i in 0 until results.length()) {
-                val item = results.optJSONObject(i) ?: continue
-                val id = item.optString("id")
-                val title = item.optString("title")
-                val uploader = item.optString("uploader", "")
-                val durationSec = item.optDouble("duration", 0.0)
-                val viewCount = item.optLong("viewCount", -1L).takeIf { it >= 0 }
-                val artworkUrl = item.optString("thumbnail").takeIf { it.isNotBlank() }
+                        val artworkUrl = run {
+                            val thumbnails = json.optJSONArray("thumbnails")
+                            if (thumbnails != null && thumbnails.length() > 0) {
+                                var bestUrl: String? = null
+                                var maxResolution = -1
+                                for (i in 0 until thumbnails.length()) {
+                                    val item = thumbnails.optJSONObject(i) ?: continue
+                                    val url = item.optString("url").takeIf { it.isNotBlank() } ?: continue
+                                    val width = item.optInt("width", 0)
+                                    val height = item.optInt("height", 0)
+                                    val resolution = width * height
+                                    if (bestUrl == null || resolution > maxResolution) {
+                                        bestUrl = url
+                                        maxResolution = resolution
+                                    }
+                                }
+                                bestUrl ?: json.optString("thumbnail").takeIf { it.isNotBlank() }
+                            } else {
+                                json.optString("thumbnail").takeIf { it.isNotBlank() }
+                            }
+                        }
 
-                if (id.isNotBlank() && title.isNotBlank()) {
-                    candidates.add(
-                        YouTubeCandidate(
-                            videoId = id,
-                            title = title,
-                            channelTitle = uploader,
-                            durationMs = (durationSec * 1000.0).toLong(),
-                            viewCount = viewCount,
-                            artworkUrl = artworkUrl
-                        )
-                    )
+                        if (id.isNotBlank() && title.isNotBlank()) {
+                            candidates.add(
+                                YouTubeCandidate(
+                                    videoId = id,
+                                    title = title,
+                                    channelTitle = uploader,
+                                    durationMs = (durationSec * 1000.0).toLong(),
+                                    viewCount = viewCount,
+                                    artworkUrl = artworkUrl
+                                )
+                            )
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Skipping unparseable JSON line in search output", e)
+                    }
                 }
             }
 
-            Log.d(TAG, "Remote search found ${candidates.size} candidates for '$query'")
+            Log.d(TAG, "Found ${candidates.size} YouTube search candidates for '$query'")
             Result.success(candidates)
         } catch (e: Exception) {
-            Log.e(TAG, "Remote search error for query: $query", e)
+            Log.e(TAG, "YouTube search failed for query: $query", e)
             Result.failure(e)
         }
     }

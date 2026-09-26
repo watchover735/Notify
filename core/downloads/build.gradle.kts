@@ -50,8 +50,9 @@ dependencies {
     // OkHttp for download progress
     implementation(libs.okhttp)
 
-
-
+    // yt-dlp for URL extraction
+    implementation(libs.youtubedl.android.library)
+    implementation(libs.youtubedl.android.ffmpeg)
     // Testing
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)

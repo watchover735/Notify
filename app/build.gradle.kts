@@ -77,7 +77,8 @@ dependencies {
     implementation(project(":core:playback"))
     implementation(project(":core:downloads"))
 
-
+    implementation(libs.youtubedl.android.library)
+    implementation(libs.youtubedl.android.ffmpeg)
     implementation(libs.okhttp)
     implementation(libs.coil.compose)
 
