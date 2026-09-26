@@ -1024,7 +1024,11 @@ class PlaybackQueueCoordinator(
             val currentSession = playbackSessionId
             val scope = serviceScope ?: CoroutineScope(Dispatchers.Main)
             scope.launch(ioDispatcher) {
-                val freshResult = streamResolver.resolveStream("https://www.youtube.com/watch?v=$videoId")
+                val freshResult = streamResolver.resolveStream(
+                    canonicalYoutubeUrl = "https://www.youtube.com/watch?v=$videoId",
+                    title = currentEntry.track.title,
+                    artist = currentEntry.track.artist
+                )
                 if (currentSession != playbackSessionId) return@launch
                 if (freshResult.isSuccess) {
                     val freshStream = freshResult.getOrThrow()

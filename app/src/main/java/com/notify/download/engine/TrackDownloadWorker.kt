@@ -600,7 +600,11 @@ class TrackDownloadWorker(
         Log.i(TAG, "RESOLVE_START trackId=$trackId canonicalUrl=$canonicalUrl")
 
         val chain = ResolvedStreamProviderChain(applicationContext)
-        val resolveRes = chain.resolveStream(canonicalUrl)
+        val resolveRes = chain.resolveStream(
+            canonicalYoutubeUrl = canonicalUrl,
+            title = trackTitle,
+            artist = trackArtist
+        )
         val resolveElapsedMs = System.currentTimeMillis() - resolveStartMs
 
         if (resolveRes.isFailure) {
@@ -633,7 +637,11 @@ class TrackDownloadWorker(
                     if (code == 403) {
                         Log.w(TAG, "HTTP 403 during direct streaming for videoId=$videoId (attempt $attempts)")
                         if (attempts == 1 && videoId != null && StreamUrlCache.canRetry403(videoId)) {
-                            val retryRes = chain.resolveStream(canonicalUrl)
+                            val retryRes = chain.resolveStream(
+                                canonicalYoutubeUrl = canonicalUrl,
+                                title = trackTitle,
+                                artist = trackArtist
+                            )
                             if (retryRes.isSuccess) {
                                 currentStream = retryRes.getOrThrow()
                                 return@use

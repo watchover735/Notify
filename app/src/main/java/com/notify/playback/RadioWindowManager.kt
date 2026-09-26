@@ -399,6 +399,7 @@ class RadioWindowManager(
             }
 
             val canonicalUrl = "https://www.youtube.com/watch?v=$videoId"
+            Log.i(TAG, "RADIO_RESOLVING_IMMEDIATE_NEXT key=$nextKey videoId=$videoId title=\"${immediateNextEntry.track.title}\" artist=\"${immediateNextEntry.track.artist}\"")
             val streamResult = streamResolver.resolveStream(
                 canonicalYoutubeUrl = canonicalUrl,
                 title = immediateNextEntry.track.title,

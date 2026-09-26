@@ -208,7 +208,11 @@ class OnlineSearchViewModel(
                 if (StreamUrlCache.get(candidate.videoId) != null) continue
                 try {
                     val canonicalUrl = "https://www.youtube.com/watch?v=${candidate.videoId}"
-                    streamResolver.resolveStream(canonicalUrl)
+                    streamResolver.resolveStream(
+                        canonicalYoutubeUrl = canonicalUrl,
+                        title = candidate.title,
+                        artist = candidate.channelTitle
+                    )
                 } catch (_: Throwable) {
                     // Non-blocking background pre-resolution
                 }

@@ -143,6 +143,16 @@ open class InnerTubeWatchNextProvider(
                         }
                     }
                 }
+                if (current.has("musicResponsiveListItemRenderer")) {
+                    val renderer = current.optJSONObject("musicResponsiveListItemRenderer")
+                    if (renderer != null) {
+                        parseResponsiveListItemCandidate(renderer, seedVideoId)?.let { candidate ->
+                            if (results.none { it.videoId == candidate.videoId }) {
+                                results.add(candidate)
+                            }
+                        }
+                    }
+                }
                 val keys = current.keys()
                 while (keys.hasNext() && results.size < maxLimit) {
                     val key = keys.next()
@@ -191,6 +201,40 @@ open class InnerTubeWatchNextProvider(
             title = title,
             channelTitle = artist,
             durationMs = durationMs,
+            viewCount = 0L,
+            artworkUrl = artworkUrl,
+            album = null,
+            provider = "youtube_music"
+        )
+    }
+
+    private fun parseResponsiveListItemCandidate(renderer: JSONObject, seedVideoId: String): YouTubeCandidate? {
+        val videoId = renderer.optJSONObject("playlistItemData")?.optString("videoId")
+            ?: renderer.optJSONObject("navigationEndpoint")?.optJSONObject("watchEndpoint")?.optString("videoId")
+            ?: renderer.optString("videoId")
+        if (videoId.isBlank() || videoId.equals(seedVideoId, ignoreCase = true)) return null
+
+        val flexColumns = renderer.optJSONArray("flexColumns") ?: return null
+        val col0 = flexColumns.optJSONObject(0)?.optJSONObject("musicResponsiveListItemFlexColumnRenderer")
+        val titleRuns = col0?.optJSONObject("text")?.optJSONArray("runs")
+        val title = titleRuns?.optJSONObject(0)?.optString("text")?.trim()
+        if (title.isNullOrBlank()) return null
+
+        val col1 = flexColumns.optJSONObject(1)?.optJSONObject("musicResponsiveListItemFlexColumnRenderer")
+        val artistRuns = col1?.optJSONObject("text")?.optJSONArray("runs")
+        val artist = artistRuns?.optJSONObject(0)?.optString("text")?.trim() ?: "YouTube Music"
+
+        val thumbnails = renderer.optJSONObject("thumbnail")?.optJSONObject("musicThumbnailRenderer")
+            ?.optJSONObject("thumbnail")?.optJSONArray("thumbnails")
+        val artworkUrl = if (thumbnails != null && thumbnails.length() > 0) {
+            thumbnails.optJSONObject(thumbnails.length() - 1)?.optString("url")
+        } else null
+
+        return YouTubeCandidate(
+            videoId = videoId,
+            title = title,
+            channelTitle = artist,
+            durationMs = 0L,
             viewCount = 0L,
             artworkUrl = artworkUrl,
             album = null,

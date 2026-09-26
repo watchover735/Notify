@@ -51,17 +51,21 @@ open class FastInnerTubeStreamResolver(
             return@withContext Result.failure(IllegalArgumentException("Invalid YouTube URL: $canonicalYoutubeUrl"))
         }
 
+        val start = System.currentTimeMillis()
+        Log.i(TAG, "FAST_INNERTUBE_ATTEMPT_START videoId=$videoId url=\"$canonicalYoutubeUrl\"")
+
         try {
             withTimeout(timeoutMs) {
-                queryPlayerEndpoint(videoId)
+                queryPlayerEndpoint(videoId, start)
             }
         } catch (e: Exception) {
-            logW("FastInnerTube stream resolution failed or timed out for videoId=$videoId: ${e.message}")
+            val elapsed = System.currentTimeMillis() - start
+            Log.w(TAG, "FAST_INNERTUBE_ATTEMPT_COMPLETE outcome=FAILED videoId=$videoId elapsedMs=$elapsed error=${e.message}")
             Result.failure(e)
         }
     }
 
-    private fun queryPlayerEndpoint(videoId: String): Result<ResolvedStream> {
+    private fun queryPlayerEndpoint(videoId: String, start: Long = System.currentTimeMillis()): Result<ResolvedStream> {
         val profile = InnerTubeConfig.PROFILE_ANDROID_MUSIC
         val url = "${InnerTubeConfig.BASE_URL}$PLAYER_PATH"
 
@@ -86,24 +90,41 @@ open class FastInnerTubeStreamResolver(
 
         val response = client.newCall(request).execute()
         if (!response.isSuccessful) {
+            val elapsed = System.currentTimeMillis() - start
+            Log.w(TAG, "FAST_INNERTUBE_ATTEMPT_COMPLETE outcome=FAILED videoId=$videoId elapsedMs=$elapsed reason=http_${response.code}")
             return Result.failure(IllegalStateException("HTTP ${response.code} from player endpoint"))
         }
 
-        val responseBody = response.body?.string() ?: return Result.failure(IllegalStateException("Empty player response"))
+        val responseBody = response.body?.string()
+        if (responseBody.isNullOrBlank()) {
+            val elapsed = System.currentTimeMillis() - start
+            Log.w(TAG, "FAST_INNERTUBE_ATTEMPT_COMPLETE outcome=FAILED videoId=$videoId elapsedMs=$elapsed reason=empty_body")
+            return Result.failure(IllegalStateException("Empty player response"))
+        }
         val root = JSONObject(responseBody)
 
         val playabilityStatus = root.optJSONObject("playabilityStatus")
         val status = playabilityStatus?.optString("status")
         if (status != "OK") {
             val reason = playabilityStatus?.optString("reason") ?: "Status: $status"
+            val elapsed = System.currentTimeMillis() - start
+            Log.w(TAG, "FAST_INNERTUBE_ATTEMPT_COMPLETE outcome=FAILED videoId=$videoId elapsedMs=$elapsed reason=playability_$status")
             return Result.failure(IllegalStateException("Playability not OK: $reason"))
         }
 
         val streamingData = root.optJSONObject("streamingData")
-            ?: return Result.failure(IllegalStateException("No streamingData in player response"))
+        if (streamingData == null) {
+            val elapsed = System.currentTimeMillis() - start
+            Log.w(TAG, "FAST_INNERTUBE_ATTEMPT_COMPLETE outcome=FAILED videoId=$videoId elapsedMs=$elapsed reason=no_streaming_data")
+            return Result.failure(IllegalStateException("No streamingData in player response"))
+        }
 
         val adaptiveFormats = streamingData.optJSONArray("adaptiveFormats")
-            ?: return Result.failure(IllegalStateException("No adaptiveFormats in player response"))
+        if (adaptiveFormats == null) {
+            val elapsed = System.currentTimeMillis() - start
+            Log.w(TAG, "FAST_INNERTUBE_ATTEMPT_COMPLETE outcome=FAILED videoId=$videoId elapsedMs=$elapsed reason=no_adaptive_formats")
+            return Result.failure(IllegalStateException("No adaptiveFormats in player response"))
+        }
 
         // Candidate audio format attributes
         data class AudioFormat(
@@ -162,12 +183,15 @@ open class FastInnerTubeStreamResolver(
         }
 
         if (audioCandidates.isEmpty()) {
+            val elapsed = System.currentTimeMillis() - start
+            Log.w(TAG, "FAST_INNERTUBE_ATTEMPT_COMPLETE outcome=FAILED videoId=$videoId elapsedMs=$elapsed reason=cipher_required")
             return Result.failure(IllegalStateException("No direct audio URLs in adaptiveFormats (cipher required)"))
         }
 
         // Prefer highest bitrate audio
         val best = audioCandidates.maxByOrNull { it.bitrate }!!
-        logD("FastInnerTube resolved videoId=$videoId format=${best.formatId} bitrate=${best.bitrate}")
+        val elapsed = System.currentTimeMillis() - start
+        Log.i(TAG, "FAST_INNERTUBE_ATTEMPT_COMPLETE outcome=SUCCESS videoId=$videoId elapsedMs=$elapsed format=${best.formatId} bitrate=${best.bitrate}")
 
         return Result.success(
             ResolvedStream(
