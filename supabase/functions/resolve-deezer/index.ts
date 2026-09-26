@@ -108,6 +108,7 @@ Deno.serve(async (req: Request) => {
       mimeType: "audio/mpeg",
       container: "mp3",
       bitrate: 128000,
+      durationMs: 30000,
       expiresAtEpochMs: Date.now() + 3600000, // 1 hour validity
       fallbackUrls: [],
       videoId: videoId,

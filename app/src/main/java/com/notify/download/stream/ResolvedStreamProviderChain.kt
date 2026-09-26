@@ -134,6 +134,14 @@ class ResolvedStreamProviderChain(
         title: String?,
         artist: String?,
         isPrefetch: Boolean
+    ): Result<ResolvedStream> = resolveStream(canonicalYoutubeUrl, title, artist, isPrefetch, null)
+
+    override suspend fun resolveStream(
+        canonicalYoutubeUrl: String,
+        title: String?,
+        artist: String?,
+        isPrefetch: Boolean,
+        expectedDurationMs: Long?
     ): Result<ResolvedStream> {
         val videoId = extractVideoId(canonicalYoutubeUrl) ?: return Result.failure(
             IllegalArgumentException("Invalid canonical YouTube URL: $canonicalYoutubeUrl")
@@ -154,7 +162,8 @@ class ResolvedStreamProviderChain(
                 expiresAtEpochMs = Long.MAX_VALUE,
                 videoId = videoId,
                 mimeType = "audio/mp4",
-                container = "m4a"
+                container = "m4a",
+                durationMs = expectedDurationMs
             )
             return Result.success(localStream)
         }
@@ -170,7 +179,7 @@ class ResolvedStreamProviderChain(
         val deferred = resolutionScope.async {
             try {
                 withTimeout(RESOLUTION_TIMEOUT_MS) {
-                    executeChainResolution(videoId, canonicalYoutubeUrl, title, artist, isPrefetch)
+                    executeChainResolution(videoId, canonicalYoutubeUrl, title, artist, isPrefetch, expectedDurationMs)
                 }
             } catch (e: TimeoutCancellationException) {
                 // Cache rescue: if a background racer or yt-dlp wrote to cache right before timeout cancelled
@@ -205,7 +214,8 @@ class ResolvedStreamProviderChain(
         canonicalYoutubeUrl: String,
         title: String?,
         artist: String?,
-        isPrefetch: Boolean
+        isPrefetch: Boolean,
+        expectedDurationMs: Long? = null
     ): Result<ResolvedStream> {
         // Double check cache
         val doubleCheckCached = StreamUrlCache.get(videoId)
@@ -232,23 +242,26 @@ class ResolvedStreamProviderChain(
 
         var effectiveTitle = title?.trim()?.takeIf { it.isNotEmpty() }
         var effectiveArtist = artist?.trim()?.takeIf { it.isNotEmpty() && !isGenericArtist(it) }
+        var effectiveExpectedDurationMs = expectedDurationMs
         var query = listOfNotNull(effectiveTitle, effectiveArtist).joinToString(" ").trim()
 
-        // Failsafe: if query is blank but videoId is available, fast-fetch title/author (via oEmbed / InnerTube)
+        // Failsafe: if query is blank or expectedDurationMs is null, fast-fetch title/author/duration (via oEmbed / InnerTube)
         // so videoId-only requests (radio autoplay, watch-next, 403 retries) can participate in Stage c race
-        if (query.isBlank() && videoId.isNotBlank()) {
+        if ((query.isBlank() || effectiveExpectedDurationMs == null) && videoId.isNotBlank()) {
             val fetchedMeta = fetchVideoMetadataFast(videoId)
             if (fetchedMeta != null) {
-                val (fTitle, fAuthor) = fetchedMeta
                 if (effectiveTitle.isNullOrBlank()) {
-                    effectiveTitle = fTitle.trim().takeIf { it.isNotEmpty() }
+                    effectiveTitle = fetchedMeta.title.trim().takeIf { it.isNotEmpty() }
                 }
                 if (effectiveArtist.isNullOrBlank()) {
-                    effectiveArtist = fAuthor.trim().takeIf { it.isNotEmpty() && !isGenericArtist(it) }
+                    effectiveArtist = fetchedMeta.author.trim().takeIf { it.isNotEmpty() && !isGenericArtist(it) }
+                }
+                if (effectiveExpectedDurationMs == null && fetchedMeta.durationMs != null) {
+                    effectiveExpectedDurationMs = fetchedMeta.durationMs
                 }
                 query = listOfNotNull(effectiveTitle, effectiveArtist).joinToString(" ").trim()
                 if (query.isNotBlank()) {
-                    logI("QUERY_RECOVERED_FROM_VIDEOMETA videoId=$videoId recoveredQuery=\"$query\"")
+                    logI("QUERY_RECOVERED_FROM_VIDEOMETA videoId=$videoId recoveredQuery=\"$query\" expectedDurationMs=$effectiveExpectedDurationMs")
                 }
             }
         }
@@ -271,11 +284,14 @@ class ResolvedStreamProviderChain(
                         val res = block()
                         if (res != null && res.isSuccess) {
                             val stream = res.getOrThrow()
-                            // Atomic completion: first winner succeeds, others return false
-                            if (winnerDeferred.complete(name to stream)) {
-                                safeLateWinner.complete(name to stream)
-                                val elapsed = System.currentTimeMillis() - raceStart
-                                logI("RACE_WINNER provider=$name videoId=$videoId elapsedMs=$elapsed format=${stream.formatId}")
+                            val isValid = validateDuration(name, stream, effectiveExpectedDurationMs)
+                            if (isValid) {
+                                // Atomic completion: first winner succeeds, others return false
+                                if (winnerDeferred.complete(name to stream)) {
+                                    safeLateWinner.complete(name to stream)
+                                    val elapsed = System.currentTimeMillis() - raceStart
+                                    logI("RACE_WINNER provider=$name videoId=$videoId elapsedMs=$elapsed format=${stream.formatId}")
+                                }
                             }
                         }
                     } catch (_: Throwable) {
@@ -291,13 +307,13 @@ class ResolvedStreamProviderChain(
             if (customRacers != null) {
                 for ((name, resolver) in customRacers) {
                     registerRacer(name) {
-                        resolver.resolveStream(canonicalYoutubeUrl, effectiveTitle, effectiveArtist, isPrefetch)
+                        resolver.resolveStream(canonicalYoutubeUrl, effectiveTitle, effectiveArtist, isPrefetch, effectiveExpectedDurationMs)
                     }
                 }
             } else {
                 // 1. FastInnerTube (direct YouTube player endpoint)
                 registerRacer("FastInnerTube") {
-                    fastPrimaryResolver.resolveStream(canonicalYoutubeUrl, effectiveTitle, effectiveArtist, isPrefetch)
+                    fastPrimaryResolver.resolveStream(canonicalYoutubeUrl, effectiveTitle, effectiveArtist, isPrefetch, effectiveExpectedDurationMs)
                 }
 
                 // 2. Cobalt (temporarily disabled due to Cobalt v10 API changes & Cloudflare Turnstile blocks;
@@ -313,7 +329,7 @@ class ResolvedStreamProviderChain(
                 if (query.isNotBlank()) {
                     // SoundCloud
                     registerRacer("SoundCloud") {
-                        soundCloudResolver.resolveStream(query, videoId)
+                        soundCloudResolver.resolveStream(query, videoId, effectiveExpectedDurationMs)
                     }
 
                     // JioSaavn (conditional Indic / Indian artist routing)
@@ -321,7 +337,7 @@ class ResolvedStreamProviderChain(
                     logI("ROUTING_DECISION jiosaavn=$includeJioSaavn reason=$routingReason query=\"$query\"")
                     if (includeJioSaavn) {
                         registerRacer("JioSaavn") {
-                            jioSaavnResolver.resolveStream(query, videoId)
+                            jioSaavnResolver.resolveStream(query, videoId, effectiveExpectedDurationMs)
                         }
                     }
 
@@ -329,7 +345,7 @@ class ResolvedStreamProviderChain(
                     // Deezer catalog has near-zero coverage for Indian / Bollywood / Punjabi tracks
                     if (!includeJioSaavn) {
                         registerRacer("Deezer") {
-                            deezerResolver.resolveStream(query, videoId)
+                            deezerResolver.resolveStream(query, videoId, effectiveExpectedDurationMs)
                         }
                     } else {
                         logI("ROUTING_DECISION deezer=false reason=indic_route_optimized query=\"$query\"")
@@ -343,7 +359,7 @@ class ResolvedStreamProviderChain(
                 winnerDeferred.completeExceptionally(NoSuchElementException("No race competitors registered"))
             }
 
-            logI("RACE_START competitors=$competitors videoId=$videoId query=\"$query\"")
+            logI("RACE_START competitors=$competitors videoId=$videoId query=\"$query\" expectedDurationMs=$effectiveExpectedDurationMs")
 
             // Wait up to RACE_TIMEOUT_MS for early winner
             val earlyWinner = withTimeoutOrNull(RACE_TIMEOUT_MS) {
@@ -368,7 +384,7 @@ class ResolvedStreamProviderChain(
             if (!winnerDeferred.isActive && remainingJobs.get() == 0) {
                 logW("RACE_FAILED videoId=$videoId elapsedMs=$raceElapsed. Falling back to yt-dlp.")
                 val fallbackStart = System.currentTimeMillis()
-                val fallbackResult = fallbackResolver.resolveStream(canonicalYoutubeUrl, effectiveTitle, effectiveArtist, isPrefetch)
+                val fallbackResult = fallbackResolver.resolveStream(canonicalYoutubeUrl, effectiveTitle, effectiveArtist, isPrefetch, effectiveExpectedDurationMs)
                 val fallbackElapsed = System.currentTimeMillis() - fallbackStart
 
                 if (fallbackResult.isSuccess) {
@@ -390,7 +406,7 @@ class ResolvedStreamProviderChain(
             // allowing any late winner from lightweight providers to still win.
             logW("RACE_TIMEOUT_EXPIRED videoId=$videoId elapsedMs=$raceElapsed. Starting yt-dlp fallback while keeping late racers active.")
             val fallbackDeferred = raceScope.async {
-                fallbackResolver.resolveStream(canonicalYoutubeUrl, effectiveTitle, effectiveArtist, isPrefetch)
+                fallbackResolver.resolveStream(canonicalYoutubeUrl, effectiveTitle, effectiveArtist, isPrefetch, effectiveExpectedDurationMs)
             }
 
             return select<Result<ResolvedStream>> {
@@ -443,7 +459,43 @@ class ResolvedStreamProviderChain(
         }
     }
 
-    private fun fetchVideoMetadataFast(videoId: String): Pair<String, String>? {
+    private fun validateDuration(
+        providerName: String,
+        stream: ResolvedStream,
+        expectedDurationMs: Long?
+    ): Boolean {
+        if (expectedDurationMs == null || expectedDurationMs <= 0L) {
+            return true
+        }
+        val streamDuration = stream.durationMs
+        if (streamDuration == null || streamDuration <= 0L) {
+            return true
+        }
+
+        // A track is considered a duration mismatch if it is > 15-20% shorter than expected
+        // Minimum absolute tolerance threshold of 15 seconds to avoid rejecting minor tempo/silence differences
+        val toleranceMs = maxOf(15_000L, (expectedDurationMs * 0.20).toLong())
+        val minAllowedMs = expectedDurationMs - toleranceMs
+
+        // Also check if stream is an obvious preview/snippet (e.g. <= 35s when expected > 60s)
+        val isSnippet = expectedDurationMs > 60_000L && streamDuration <= 35_000L
+
+        if (streamDuration < minAllowedMs || isSnippet) {
+            val expSec = expectedDurationMs / 1000L
+            val gotSec = streamDuration / 1000L
+            logW("DURATION_MISMATCH_REJECTED provider=$providerName expected=${expSec}s got=${gotSec}s")
+            return false
+        }
+        return true
+    }
+
+    data class FastVideoMeta(
+        val title: String,
+        val author: String,
+        val durationMs: Long? = null
+    )
+
+    private fun fetchVideoMetadataFast(videoId: String): FastVideoMeta? {
         // Fast Attempt 1: YouTube oEmbed endpoint (instant, unauthenticated GET)
         try {
             val oembedUrl = "https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=$videoId&format=json"
@@ -459,7 +511,7 @@ class ResolvedStreamProviderChain(
                     val t = json.optString("title")
                     val a = json.optString("author_name")
                     if (t.isNotBlank()) {
-                        return Pair(t, a)
+                        return FastVideoMeta(t, a, null)
                     }
                 }
             }
@@ -492,8 +544,9 @@ class ResolvedStreamProviderChain(
                     val details = root.optJSONObject("videoDetails")
                     val t = details?.optString("title").orEmpty()
                     val a = details?.optString("author").orEmpty()
+                    val durMs = details?.optString("lengthSeconds")?.toLongOrNull()?.let { it * 1000L }
                     if (t.isNotBlank()) {
-                        return Pair(t, a)
+                        return FastVideoMeta(t, a, durMs)
                     }
                 }
             }

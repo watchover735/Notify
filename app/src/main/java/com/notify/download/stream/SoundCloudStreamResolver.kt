@@ -31,7 +31,8 @@ class SoundCloudStreamResolver(
 
     suspend fun resolveStream(
         query: String,
-        videoId: String? = null
+        videoId: String? = null,
+        expectedDurationMs: Long? = null
     ): Result<ResolvedStream> = withContext(Dispatchers.IO) {
         val trimmedQuery = query.trim()
         if (trimmedQuery.isBlank()) {
@@ -47,6 +48,9 @@ class SoundCloudStreamResolver(
                     put("query", trimmedQuery)
                     if (!videoId.isNullOrBlank()) {
                         put("videoId", videoId)
+                    }
+                    if (expectedDurationMs != null && expectedDurationMs > 0) {
+                        put("expectedDurationMs", expectedDurationMs)
                     }
                 }
 
@@ -87,11 +91,12 @@ class SoundCloudStreamResolver(
                 val mimeType = json.optString("mimeType", "audio/mpeg")
                 val container = json.optString("container", "mp3")
                 val bitrate = json.optLong("bitrate", 128000L)
+                val durationMs = json.optLong("durationMs", 0L).takeIf { it > 0 }
                 val expiresAtEpochMs = json.optLong("expiresAtEpochMs", System.currentTimeMillis() + 1800000L)
                 val returnedVideoId = json.optString("videoId").takeIf { it.isNotBlank() } ?: videoId
 
                 val elapsed = System.currentTimeMillis() - start
-                Log.i(TAG, "SOUNDCLOUD_ATTEMPT_COMPLETE outcome=SUCCESS elapsedMs=$elapsed format=$formatId")
+                Log.i(TAG, "SOUNDCLOUD_ATTEMPT_COMPLETE outcome=SUCCESS elapsedMs=$elapsed format=$formatId durationMs=$durationMs")
 
                 val resolvedStream = ResolvedStream(
                     streamUrl = streamUrl,
@@ -99,6 +104,7 @@ class SoundCloudStreamResolver(
                     mimeType = mimeType,
                     container = container,
                     bitrate = bitrate,
+                    durationMs = durationMs,
                     expiresAtEpochMs = expiresAtEpochMs,
                     videoId = returnedVideoId
                 )

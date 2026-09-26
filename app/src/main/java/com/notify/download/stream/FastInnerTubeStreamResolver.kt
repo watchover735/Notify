@@ -191,7 +191,9 @@ open class FastInnerTubeStreamResolver(
         // Prefer highest bitrate audio
         val best = audioCandidates.maxByOrNull { it.bitrate }!!
         val elapsed = System.currentTimeMillis() - start
-        Log.i(TAG, "FAST_INNERTUBE_ATTEMPT_COMPLETE outcome=SUCCESS videoId=$videoId elapsedMs=$elapsed format=${best.formatId} bitrate=${best.bitrate}")
+        val videoDetails = root.optJSONObject("videoDetails")
+        val durationMs = videoDetails?.optString("lengthSeconds")?.toLongOrNull()?.let { it * 1000L }
+        Log.i(TAG, "FAST_INNERTUBE_ATTEMPT_COMPLETE outcome=SUCCESS videoId=$videoId elapsedMs=$elapsed format=${best.formatId} bitrate=${best.bitrate} durationMs=$durationMs")
 
         return Result.success(
             ResolvedStream(
@@ -203,7 +205,8 @@ open class FastInnerTubeStreamResolver(
                 mimeType = best.mimeType,
                 container = best.container,
                 bitrate = best.bitrate,
-                contentLength = best.contentLength
+                contentLength = best.contentLength,
+                durationMs = durationMs
             )
         )
     }

@@ -404,7 +404,8 @@ class RadioWindowManager(
                 canonicalYoutubeUrl = canonicalUrl,
                 title = immediateNextEntry.track.title,
                 artist = immediateNextEntry.track.artist,
-                isPrefetch = true
+                isPrefetch = true,
+                expectedDurationMs = immediateNextEntry.track.durationMs
             )
 
             if (streamResult.isFailure) {

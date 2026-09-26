@@ -1027,7 +1027,9 @@ class PlaybackQueueCoordinator(
                 val freshResult = streamResolver.resolveStream(
                     canonicalYoutubeUrl = "https://www.youtube.com/watch?v=$videoId",
                     title = currentEntry.track.title,
-                    artist = currentEntry.track.artist
+                    artist = currentEntry.track.artist,
+                    isPrefetch = false,
+                    expectedDurationMs = currentEntry.track.durationMs
                 )
                 if (currentSession != playbackSessionId) return@launch
                 if (freshResult.isSuccess) {
@@ -1416,7 +1418,9 @@ class PlaybackQueueCoordinator(
                 val streamResult = streamResolver.resolveStream(
                     canonicalYoutubeUrl = canonicalWatchUrl,
                     title = track.title,
-                    artist = track.artist
+                    artist = track.artist,
+                    isPrefetch = false,
+                    expectedDurationMs = track.durationMs
                 )
                 if (streamResult.isSuccess) {
                     val stream = streamResult.getOrThrow()

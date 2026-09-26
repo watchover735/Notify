@@ -30,7 +30,8 @@ class DeezerStreamResolver(
 
     suspend fun resolveStream(
         query: String,
-        videoId: String? = null
+        videoId: String? = null,
+        expectedDurationMs: Long? = null
     ): Result<ResolvedStream> = withContext(Dispatchers.IO) {
         val trimmedQuery = query.trim()
         if (trimmedQuery.isBlank()) {
@@ -46,6 +47,9 @@ class DeezerStreamResolver(
                     put("query", trimmedQuery)
                     if (!videoId.isNullOrBlank()) {
                         put("videoId", videoId)
+                    }
+                    if (expectedDurationMs != null && expectedDurationMs > 0) {
+                        put("expectedDurationMs", expectedDurationMs)
                     }
                 }
 
@@ -86,11 +90,12 @@ class DeezerStreamResolver(
                 val mimeType = json.optString("mimeType", "audio/mpeg")
                 val container = json.optString("container", "mp3")
                 val bitrate = json.optLong("bitrate", 128000L)
+                val durationMs = json.optLong("durationMs", 30_000L).takeIf { it > 0 } ?: 30_000L
                 val expiresAtEpochMs = json.optLong("expiresAtEpochMs", System.currentTimeMillis() + 3600000L)
                 val returnedVideoId = json.optString("videoId").takeIf { it.isNotBlank() } ?: videoId
 
                 val elapsed = System.currentTimeMillis() - start
-                Log.i(TAG, "DEEZER_ATTEMPT_COMPLETE outcome=SUCCESS elapsedMs=$elapsed format=$formatId")
+                Log.i(TAG, "DEEZER_ATTEMPT_COMPLETE outcome=SUCCESS elapsedMs=$elapsed format=$formatId durationMs=$durationMs")
 
                 val resolvedStream = ResolvedStream(
                     streamUrl = streamUrl,
@@ -98,6 +103,7 @@ class DeezerStreamResolver(
                     mimeType = mimeType,
                     container = container,
                     bitrate = bitrate,
+                    durationMs = durationMs,
                     expiresAtEpochMs = expiresAtEpochMs,
                     videoId = returnedVideoId
                 )

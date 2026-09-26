@@ -34,6 +34,7 @@ class JioSaavnAndSoundCloudResolverTest {
                 "container": "m4a",
                 "bitrate": 320000,
                 "expiresAtEpochMs": 1790432264564,
+                "durationMs": 268000,
                 "fallbackUrls": [
                     "https://aac.saavncdn.com/123/tum_hi_ho_160.mp4",
                     "https://aac.saavncdn.com/123/tum_hi_ho_96.mp4"
@@ -63,6 +64,7 @@ class JioSaavnAndSoundCloudResolverTest {
         assertEquals("jiosaavn_aac_320", stream.formatId)
         assertEquals("audio/mp4", stream.mimeType)
         assertEquals(320_000L, stream.bitrate)
+        assertEquals(268_000L, stream.durationMs)
         assertEquals("vid1", stream.videoId)
         assertEquals(2, stream.fallbackUrls.size)
         assertEquals("https://aac.saavncdn.com/123/tum_hi_ho_160.mp4", stream.fallbackUrls[0])
@@ -80,6 +82,7 @@ class JioSaavnAndSoundCloudResolverTest {
                 "mimeType": "audio/mpeg",
                 "container": "mp3",
                 "bitrate": 128000,
+                "durationMs": 200000,
                 "expiresAtEpochMs": 1790432264564,
                 "videoId": "vid2"
             }
@@ -106,6 +109,7 @@ class JioSaavnAndSoundCloudResolverTest {
         assertEquals("soundcloud_mp3_progressive", stream.formatId)
         assertEquals("audio/mpeg", stream.mimeType)
         assertEquals(128_000L, stream.bitrate)
+        assertEquals(200_000L, stream.durationMs)
         assertEquals("vid2", stream.videoId)
     }
 
@@ -120,6 +124,7 @@ class JioSaavnAndSoundCloudResolverTest {
                 "mimeType": "audio/mpeg",
                 "container": "mp3",
                 "bitrate": 128000,
+                "durationMs": 30000,
                 "expiresAtEpochMs": 1790432264564,
                 "videoId": "vid3"
             }
@@ -144,6 +149,7 @@ class JioSaavnAndSoundCloudResolverTest {
         val stream = result.getOrThrow()
         assertEquals("https://cdns-preview-d.dzcdn.net/stream/c-d.mp3", stream.streamUrl)
         assertEquals("deezer_preview_mp3_128", stream.formatId)
+        assertEquals(30_000L, stream.durationMs)
     }
 
     @Test

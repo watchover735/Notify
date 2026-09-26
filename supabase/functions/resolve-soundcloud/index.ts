@@ -106,14 +106,20 @@ Deno.serve(async (req: Request) => {
     let query = "";
     let videoId: string | null = null;
 
+    let expectedDurationMs: number | null = null;
+
     if (req.method === "GET") {
       const url = new URL(req.url);
       query = url.searchParams.get("query") || url.searchParams.get("q") || "";
       videoId = url.searchParams.get("videoId");
+      const exp = url.searchParams.get("expectedDurationMs") || url.searchParams.get("durationMs");
+      if (exp) expectedDurationMs = parseInt(exp, 10);
     } else {
       const body = await req.json().catch(() => ({}));
       query = body.query || body.q || [body.title, body.artist].filter(Boolean).join(" ");
       videoId = body.videoId || null;
+      if (body.expectedDurationMs) expectedDurationMs = parseInt(String(body.expectedDurationMs), 10);
+      else if (body.durationMs) expectedDurationMs = parseInt(String(body.durationMs), 10);
     }
 
     const trimmedQuery = query.trim();
@@ -125,7 +131,7 @@ Deno.serve(async (req: Request) => {
     }
 
     // Check cache
-    const cacheKey = trimmedQuery.toLowerCase();
+    const cacheKey = `${trimmedQuery.toLowerCase()}_${expectedDurationMs || 0}`;
     const cached = cache.get(cacheKey);
     if (cached && Date.now() < cached.expiresAt) {
       return new Response(JSON.stringify({ ...cached.data, cached: true }), {
@@ -135,7 +141,7 @@ Deno.serve(async (req: Request) => {
 
     let effectiveClientId = await getOrScrapeClientId();
     const encoded = encodeURIComponent(trimmedQuery);
-    let searchUrl = `${SEARCH_ENDPOINT}?q=${encoded}&client_id=${effectiveClientId}&limit=1`;
+    let searchUrl = `${SEARCH_ENDPOINT}?q=${encoded}&client_id=${effectiveClientId}&limit=5`;
 
     let searchResp = await fetch(searchUrl, {
       headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
@@ -145,7 +151,7 @@ Deno.serve(async (req: Request) => {
     if (searchResp.status === 401) {
       cachedClientId = null;
       effectiveClientId = await getOrScrapeClientId(true);
-      searchUrl = `${SEARCH_ENDPOINT}?q=${encoded}&client_id=${effectiveClientId}&limit=1`;
+      searchUrl = `${SEARCH_ENDPOINT}?q=${encoded}&client_id=${effectiveClientId}&limit=5`;
       searchResp = await fetch(searchUrl, {
         headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
       });
@@ -167,7 +173,23 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    const track = collection[0];
+    let track = collection[0];
+    if (expectedDurationMs && expectedDurationMs > 0 && collection.length > 1) {
+      const tolerance = Math.max(15000, expectedDurationMs * 0.20);
+      const matched = collection.find((t: any) => {
+        const d = t?.duration || 0;
+        return Math.abs(d - expectedDurationMs) <= tolerance;
+      });
+      if (matched) {
+        track = matched;
+      } else {
+        const nonSnippet = collection.find((t: any) => (t?.duration || 0) > 45000);
+        if (nonSnippet) {
+          track = nonSnippet;
+        }
+      }
+    }
+
     const transcodings = track?.media?.transcodings;
     if (!Array.isArray(transcodings) || transcodings.length === 0) {
       return new Response(
@@ -234,6 +256,8 @@ Deno.serve(async (req: Request) => {
       );
     }
 
+    const trackDuration = typeof track?.duration === "number" && track.duration > 0 ? track.duration : null;
+
     const resultData = {
       success: true,
       provider: "soundcloud",
@@ -242,6 +266,7 @@ Deno.serve(async (req: Request) => {
       mimeType: isProgressive ? "audio/mpeg" : "application/x-mpegURL",
       container: isProgressive ? "mp3" : "m3u8",
       bitrate: 128000,
+      durationMs: trackDuration,
       expiresAtEpochMs: Date.now() + 1800000, // 30 min expiration
       fallbackUrls: [],
       videoId: videoId,

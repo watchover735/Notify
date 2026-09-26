@@ -36,6 +36,14 @@ interface AudioStreamResolver {
         artist: String? = null,
         isPrefetch: Boolean = false
     ): Result<ResolvedStream> = resolveStream(canonicalYoutubeUrl, title, artist)
+
+    suspend fun resolveStream(
+        canonicalYoutubeUrl: String,
+        title: String? = null,
+        artist: String? = null,
+        isPrefetch: Boolean = false,
+        expectedDurationMs: Long? = null
+    ): Result<ResolvedStream> = resolveStream(canonicalYoutubeUrl, title, artist, isPrefetch)
 }
 
 /**
@@ -148,6 +156,14 @@ class OnlineStreamResolver(
         title: String?,
         artist: String?,
         isPrefetch: Boolean
+    ): Result<ResolvedStream> = resolveStream(canonicalYoutubeUrl, title, artist, isPrefetch, null)
+
+    override suspend fun resolveStream(
+        canonicalYoutubeUrl: String,
+        title: String?,
+        artist: String?,
+        isPrefetch: Boolean,
+        expectedDurationMs: Long?
     ): Result<ResolvedStream> {
         if (!isPrefetch) {
             cancelActivePrefetch()

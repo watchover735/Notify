@@ -14,6 +14,7 @@ data class ResolvedStream(
     val container: String? = null,
     val bitrate: Long? = null,
     val contentLength: Long? = null,
+    val durationMs: Long? = null,
     /**
      * Ordered list of lower-quality fallback stream URLs to try if [streamUrl] fails at playback time
      * (e.g., HTTP 404 when 320kbps CDN variant does not exist).

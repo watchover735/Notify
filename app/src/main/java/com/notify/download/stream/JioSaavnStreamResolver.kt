@@ -31,7 +31,8 @@ class JioSaavnStreamResolver(
 
     suspend fun resolveStream(
         query: String,
-        videoId: String? = null
+        videoId: String? = null,
+        expectedDurationMs: Long? = null
     ): Result<ResolvedStream> = withContext(Dispatchers.IO) {
         val trimmedQuery = query.trim()
         if (trimmedQuery.isBlank()) {
@@ -47,6 +48,9 @@ class JioSaavnStreamResolver(
                     put("query", trimmedQuery)
                     if (!videoId.isNullOrBlank()) {
                         put("videoId", videoId)
+                    }
+                    if (expectedDurationMs != null && expectedDurationMs > 0) {
+                        put("expectedDurationMs", expectedDurationMs)
                     }
                 }
 
@@ -87,6 +91,7 @@ class JioSaavnStreamResolver(
                 val mimeType = json.optString("mimeType", "audio/mp4")
                 val container = json.optString("container", "m4a")
                 val bitrate = json.optLong("bitrate", 320000L)
+                val durationMs = json.optLong("durationMs", 0L).takeIf { it > 0 }
                 val expiresAtEpochMs = json.optLong("expiresAtEpochMs", System.currentTimeMillis() + 86400000L)
                 val returnedVideoId = json.optString("videoId").takeIf { it.isNotBlank() } ?: videoId
 
@@ -102,7 +107,7 @@ class JioSaavnStreamResolver(
                 }
 
                 val elapsed = System.currentTimeMillis() - start
-                Log.i(TAG, "JIOSAAVN_ATTEMPT_COMPLETE outcome=SUCCESS elapsedMs=$elapsed format=$formatId fallbackCount=${fallbackUrls.size}")
+                Log.i(TAG, "JIOSAAVN_ATTEMPT_COMPLETE outcome=SUCCESS elapsedMs=$elapsed format=$formatId durationMs=$durationMs fallbackCount=${fallbackUrls.size}")
 
                 val resolvedStream = ResolvedStream(
                     streamUrl = streamUrl,
@@ -110,6 +115,7 @@ class JioSaavnStreamResolver(
                     mimeType = mimeType,
                     container = container,
                     bitrate = bitrate,
+                    durationMs = durationMs,
                     expiresAtEpochMs = expiresAtEpochMs,
                     videoId = returnedVideoId,
                     fallbackUrls = fallbackUrls

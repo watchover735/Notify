@@ -278,7 +278,7 @@ class TrackDownloadWorker(
             }
 
             val partFile = storage.getPartFile(relativeKey)
-
+            val expectedDurationMs = track?.durationMs ?: queueItem.durationMs.takeIf { it > 0 }
             val downloadSuccess = executeDownloadWithProgress(
                 trackId = trackId,
                 canonicalUrl = source.canonicalUrl,
@@ -288,7 +288,8 @@ class TrackDownloadWorker(
                 downloadId = downloadEntity.downloadId,
                 preferences = preferences,
                 trackTitle = trackTitle,
-                trackArtist = trackArtist
+                trackArtist = trackArtist,
+                expectedDurationMs = expectedDurationMs
             )
 
             when (downloadSuccess) {
@@ -515,7 +516,8 @@ class TrackDownloadWorker(
         downloadId: String,
         preferences: DownloadPreferences,
         trackTitle: String,
-        trackArtist: String
+        trackArtist: String,
+        expectedDurationMs: Long? = null
     ): DownloadOutcome {
         // If testing hook is supplied, run test executor
         testDownloadExecutor?.let { executor ->
@@ -542,7 +544,8 @@ class TrackDownloadWorker(
             downloadDao = downloadDao,
             downloadId = downloadId,
             trackTitle = trackTitle,
-            trackArtist = trackArtist
+            trackArtist = trackArtist,
+            expectedDurationMs = expectedDurationMs
         )
         if (directResult is DownloadOutcome.Success) {
             return directResult
@@ -593,7 +596,8 @@ class TrackDownloadWorker(
         downloadDao: OfflineDownloadDao,
         downloadId: String,
         trackTitle: String,
-        trackArtist: String
+        trackArtist: String,
+        expectedDurationMs: Long? = null
     ): DownloadOutcome? {
         // ── RESOLVE_START ────────────────────────────────────────────────────
         val resolveStartMs = System.currentTimeMillis()
@@ -603,7 +607,9 @@ class TrackDownloadWorker(
         val resolveRes = chain.resolveStream(
             canonicalYoutubeUrl = canonicalUrl,
             title = trackTitle,
-            artist = trackArtist
+            artist = trackArtist,
+            isPrefetch = false,
+            expectedDurationMs = expectedDurationMs
         )
         val resolveElapsedMs = System.currentTimeMillis() - resolveStartMs
 
@@ -640,7 +646,9 @@ class TrackDownloadWorker(
                             val retryRes = chain.resolveStream(
                                 canonicalYoutubeUrl = canonicalUrl,
                                 title = trackTitle,
-                                artist = trackArtist
+                                artist = trackArtist,
+                                isPrefetch = false,
+                                expectedDurationMs = expectedDurationMs
                             )
                             if (retryRes.isSuccess) {
                                 currentStream = retryRes.getOrThrow()

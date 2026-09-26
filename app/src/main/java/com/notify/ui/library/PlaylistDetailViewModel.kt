@@ -449,7 +449,9 @@ class PlaylistDetailViewModel(
             val streamResult = streamResolver.resolveStream(
                 canonicalYoutubeUrl = source.canonicalUrl,
                 title = entry.title,
-                artist = entry.artist
+                artist = entry.artist,
+                isPrefetch = false,
+                expectedDurationMs = entry.durationMs
             )
             if (streamResult.isFailure) {
                 val err = streamResult.exceptionOrNull()?.message ?: "Failed to resolve stream"

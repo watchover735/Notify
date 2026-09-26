@@ -211,7 +211,9 @@ class OnlineSearchViewModel(
                     streamResolver.resolveStream(
                         canonicalYoutubeUrl = canonicalUrl,
                         title = candidate.title,
-                        artist = candidate.channelTitle
+                        artist = candidate.channelTitle,
+                        isPrefetch = true,
+                        expectedDurationMs = candidate.durationMs
                     )
                 } catch (_: Throwable) {
                     // Non-blocking background pre-resolution
@@ -604,7 +606,9 @@ class OnlineSearchViewModel(
                 val streamResult = streamResolver.resolveStream(
                     canonicalYoutubeUrl = canonicalUrl,
                     title = candidate.title,
-                    artist = candidate.channelTitle
+                    artist = candidate.channelTitle,
+                    isPrefetch = false,
+                    expectedDurationMs = candidate.durationMs
                 )
                 if (streamResult.isFailure) {
                     val err = streamResult.exceptionOrNull()?.message ?: "Stream resolution failed"
@@ -684,7 +688,9 @@ class OnlineSearchViewModel(
                 val streamResult = streamResolver.resolveStream(
                     canonicalYoutubeUrl = canonicalUrl,
                     title = item.title,
-                    artist = item.artist
+                    artist = item.artist,
+                    isPrefetch = false,
+                    expectedDurationMs = item.durationMs
                 )
                 if (streamResult.isFailure) {
                     val err = streamResult.exceptionOrNull()?.message ?: "Stream resolution failed"

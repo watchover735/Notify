@@ -129,6 +129,7 @@ Deno.serve(async (req: Request) => {
     let fallbackStreamUrls: string[] = [];
     let selectedBitrate = 320000;
     let selectedFormatId = "jiosaavn_aac_320";
+    let selectedDurationMs: number | null = null;
 
     for (const item of results) {
       const moreInfo = item?.more_info;
@@ -154,6 +155,12 @@ Deno.serve(async (req: Request) => {
           } else {
             directStreamUrl = decrypted;
           }
+          if (moreInfo.duration) {
+            const durSec = parseInt(String(moreInfo.duration), 10);
+            if (!isNaN(durSec) && durSec > 0) {
+              selectedDurationMs = durSec * 1000;
+            }
+          }
           break;
         }
       }
@@ -168,6 +175,12 @@ Deno.serve(async (req: Request) => {
           directStreamUrl.replace("_320.mp4", "_160.mp4"),
           directStreamUrl.replace("_320.mp4", "_96.mp4"),
         ];
+        if (moreInfo.duration) {
+          const durSec = parseInt(String(moreInfo.duration), 10);
+          if (!isNaN(durSec) && durSec > 0) {
+            selectedDurationMs = durSec * 1000;
+          }
+        }
         break;
       }
     }
@@ -187,6 +200,7 @@ Deno.serve(async (req: Request) => {
       mimeType: "audio/mp4",
       container: "m4a",
       bitrate: selectedBitrate,
+      durationMs: selectedDurationMs,
       expiresAtEpochMs: Date.now() + 86400000, // 24-hr CDN token validity
       fallbackUrls: fallbackStreamUrls,
       videoId: videoId,

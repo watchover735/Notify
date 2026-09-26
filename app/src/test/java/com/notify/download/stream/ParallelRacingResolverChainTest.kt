@@ -247,4 +247,148 @@ class ParallelRacingResolverChainTest {
         assertEquals("Late winner must win over slower yt-dlp fallback", "soundcloud_late_winner", winner.formatId)
         assertEquals("https://stream.example.com/late_winner.m4a", winner.streamUrl)
     }
+
+    @Test
+    fun shortDurationSnippet_isRejected_whenExpectedDurationIsNormal() = runTest {
+        // Fast racer finishes first in 50ms, but returns a 30-second snippet (30_000ms)
+        // when expected duration is 239 seconds (239_000ms, like Heat Waves)
+        val shortSnippetResolver = object : AudioStreamResolver {
+            override suspend fun resolveStream(canonicalYoutubeUrl: String): Result<ResolvedStream> =
+                resolveStream(canonicalYoutubeUrl, null, null, false, null)
+
+            override suspend fun resolveStream(
+                canonicalYoutubeUrl: String,
+                title: String?,
+                artist: String?,
+                isPrefetch: Boolean,
+                expectedDurationMs: Long?
+            ): Result<ResolvedStream> {
+                delay(50L)
+                return Result.success(
+                    ResolvedStream(
+                        videoId = "heatwavesVid",
+                        streamUrl = "https://stream.example.com/30s_preview.mp3",
+                        formatId = "deezer_preview_mp3_128",
+                        durationMs = 30_000L
+                    )
+                )
+            }
+        }
+
+        // Full duration racer finishes at 200ms with 239_000ms duration
+        val fullTrackResolver = object : AudioStreamResolver {
+            override suspend fun resolveStream(canonicalYoutubeUrl: String): Result<ResolvedStream> =
+                resolveStream(canonicalYoutubeUrl, null, null, false, null)
+
+            override suspend fun resolveStream(
+                canonicalYoutubeUrl: String,
+                title: String?,
+                artist: String?,
+                isPrefetch: Boolean,
+                expectedDurationMs: Long?
+            ): Result<ResolvedStream> {
+                delay(200L)
+                return Result.success(
+                    ResolvedStream(
+                        videoId = "heatwavesVid",
+                        streamUrl = "https://stream.example.com/full_song.m4a",
+                        formatId = "full_song_320",
+                        durationMs = 239_000L
+                    )
+                )
+            }
+        }
+
+        val chain = ResolvedStreamProviderChain(
+            context = context,
+            fallbackResolver = fullTrackResolver,
+            customRacers = listOf("SnippetRacer" to shortSnippetResolver, "FullTrackRacer" to fullTrackResolver),
+            scope = this
+        )
+
+        val result = chain.resolveStream(
+            canonicalYoutubeUrl = "https://www.youtube.com/watch?v=heatwavesVid",
+            title = "Heat Waves",
+            artist = "Glass Animals",
+            isPrefetch = false,
+            expectedDurationMs = 239_000L
+        )
+
+        assertTrue(result.isSuccess)
+        val winner = result.getOrThrow()
+        assertEquals("30s snippet must be rejected; full track must win", "full_song_320", winner.formatId)
+        assertEquals("https://stream.example.com/full_song.m4a", winner.streamUrl)
+        assertEquals(239_000L, winner.durationMs)
+    }
+
+    @Test
+    fun allLightweightRacersMismatchDuration_fallsBackToYtDlp() = runTest {
+        // Both racers return short snippets
+        val snippetResolver = object : AudioStreamResolver {
+            override suspend fun resolveStream(canonicalYoutubeUrl: String): Result<ResolvedStream> =
+                resolveStream(canonicalYoutubeUrl, null, null, false, null)
+
+            override suspend fun resolveStream(
+                canonicalYoutubeUrl: String,
+                title: String?,
+                artist: String?,
+                isPrefetch: Boolean,
+                expectedDurationMs: Long?
+            ): Result<ResolvedStream> {
+                delay(50L)
+                return Result.success(
+                    ResolvedStream(
+                        videoId = "snippetOnlyVid",
+                        streamUrl = "https://stream.example.com/snippet.mp3",
+                        formatId = "short_preview",
+                        durationMs = 29_000L
+                    )
+                )
+            }
+        }
+
+        // yt-dlp fallback provides the actual YouTube stream
+        val ytDlpFallback = object : AudioStreamResolver {
+            override suspend fun resolveStream(canonicalYoutubeUrl: String): Result<ResolvedStream> =
+                resolveStream(canonicalYoutubeUrl, null, null, false, null)
+
+            override suspend fun resolveStream(
+                canonicalYoutubeUrl: String,
+                title: String?,
+                artist: String?,
+                isPrefetch: Boolean,
+                expectedDurationMs: Long?
+            ): Result<ResolvedStream> {
+                delay(100L)
+                return Result.success(
+                    ResolvedStream(
+                        videoId = "snippetOnlyVid",
+                        streamUrl = "https://stream.example.com/ytdlp_full.m4a",
+                        formatId = "ytdlp_audio",
+                        durationMs = 239_000L
+                    )
+                )
+            }
+        }
+
+        val chain = ResolvedStreamProviderChain(
+            context = context,
+            fallbackResolver = ytDlpFallback,
+            customRacers = listOf("Snippet1" to snippetResolver),
+            scope = this
+        )
+
+        val result = chain.resolveStream(
+            canonicalYoutubeUrl = "https://www.youtube.com/watch?v=snippetOnlyVid",
+            title = "Heat Waves",
+            artist = "Glass Animals",
+            isPrefetch = false,
+            expectedDurationMs = 239_000L
+        )
+
+        assertTrue(result.isSuccess)
+        val winner = result.getOrThrow()
+        assertEquals("When lightweight providers only have short snippets, yt-dlp must be selected", "ytdlp_audio", winner.formatId)
+        assertEquals("https://stream.example.com/ytdlp_full.m4a", winner.streamUrl)
+    }
 }
