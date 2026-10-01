@@ -61,11 +61,13 @@ object ResolvedPlaybackItemFactory {
             // Invariant: The temporary signed stream URL is NOT put in EXTRA_CONTENT_URI to avoid accidental persistence.
         }
 
+        val localArtUri = LocalArtworkStore.getArtworkUri(track.id.rawId)
+        val highResArtUri = localArtUri?.toString() ?: ArtworkResolution.highResArtwork(track.artworkUri, targetPx = 800)
         val metadata = MediaMetadata.Builder()
             .setTitle(track.title)
             .setArtist(track.artist)
             .setAlbumTitle(track.album)
-            .setArtworkUri(track.artworkUri?.let { Uri.parse(it) })
+            .setArtworkUri(highResArtUri?.let { Uri.parse(it) })
             .setExtras(extras)
             .build()
 

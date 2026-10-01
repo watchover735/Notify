@@ -28,6 +28,7 @@ import androidx.navigation.NavType
 import androidx.navigation.navArgument
 import com.notify.download.db.NotiFyDatabase
 import com.notify.download.db.PlaylistRepository
+import com.notify.ui.library.ImportPlaylistScreen
 import com.notify.ui.library.PlaylistDetailScreen
 import com.notify.ui.library.PlaylistDetailViewModel
 import com.notify.ui.library.PlaylistLibraryViewModel
@@ -43,6 +44,9 @@ fun NotiFyNavHost(
     onRequestPermission: () -> Unit = {},
     onPlayTrack: (Track) -> Unit,
     onPlayStream: (Track, String, PlaybackOrigin) -> Unit = { _, _, _ -> },
+    onPlayStreamWithContext: (Track, String, PlaybackOrigin, List<Track>) -> Unit = { track, streamUrl, origin, _ ->
+        onPlayStream(track, streamUrl, origin)
+    },
     onPlayQueue: (List<Track>, Int) -> Unit,
     onPlayQueueEntries: ((List<com.notify.core.model.QueueEntry>, Int) -> Unit)? = null,
     onShuffleAll: () -> Unit,
@@ -85,8 +89,13 @@ fun NotiFyNavHost(
                         restoreState = true
                     }
                 },
+                onNavigateToPlaylist = { playlistId ->
+                    navController.navigate(NotiFyDestination.PlaylistDetail.createRoute(playlistId))
+                },
                 onPlayTrack = onPlayTrack,
                 onPlayStream = onPlayStream,
+                onPlayStreamWithContext = onPlayStreamWithContext,
+                onPlayQueue = onPlayQueue,
                 onShuffleAll = onShuffleAll
             )
         }
@@ -135,14 +144,43 @@ fun NotiFyNavHost(
                 onRenamePlaylist = { id, title -> libraryViewModel.renamePlaylist(id, title) },
                 onDeletePlaylist = { id -> libraryViewModel.deletePlaylist(id) },
                 onImportSpotify = { url, callback -> libraryViewModel.importSpotifyPlaylist(url, callback) },
+                onNavigateToImport = {
+                    navController.navigate(NotiFyDestination.ImportPlaylist.route)
+                },
                 onDismissError = { libraryViewModel.clearImportError() },
                 onDismissMessage = { libraryViewModel.clearActionMessage() },
                 onPlayTrack = onPlayTrack,
+                onPlayQueue = onPlayQueue,
                 onTabSelected = libraryViewModel::setLibraryTab,
+                onFilterSelected = libraryViewModel::setFilter,
                 onDeleteDownload = libraryViewModel::deleteDownload,
                 onClearAllDownloads = libraryViewModel::clearAllDownloads,
                 onPinDownload = libraryViewModel::pinDownload,
                 onUnpinDownload = libraryViewModel::unpinDownload
+            )
+        }
+
+        composable(NotiFyDestination.ImportPlaylist.route) {
+            val context = LocalContext.current
+            val application = context.applicationContext as Application
+            val libraryFactory = remember(application, playlistRepository) {
+                PlaylistLibraryViewModel.Factory(application, playlistRepository)
+            }
+            val libraryViewModel: PlaylistLibraryViewModel = viewModel(factory = libraryFactory)
+            val uiState by libraryViewModel.uiState.collectAsStateWithLifecycle()
+
+            ImportPlaylistScreen(
+                onBack = { navController.popBackStack() },
+                onImportYouTube = { url, callback ->
+                    libraryViewModel.importYouTubePlaylist(url, callback)
+                },
+                onImportSpotify = { url, callback ->
+                    libraryViewModel.importSpotifyPlaylist(url, callback)
+                },
+                onImportFile = onImportSaf,
+                isImporting = uiState.isImporting,
+                importError = uiState.importError,
+                onDismissError = { libraryViewModel.clearImportError() }
             )
         }
 

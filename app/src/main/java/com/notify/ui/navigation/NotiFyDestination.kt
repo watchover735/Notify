@@ -54,6 +54,13 @@ sealed class NotiFyDestination(
         fun createRoute(playlistId: String): String = "playlist_detail/$playlistId"
     }
 
+    object ImportPlaylist : NotiFyDestination(
+        route = "import_playlist",
+        title = "Import Playlist",
+        selectedIcon = Icons.Filled.LibraryMusic,
+        unselectedIcon = Icons.Outlined.LibraryMusic
+    )
+
     companion object {
         val bottomNavTabs = listOf(Home, Search, Library)
     }

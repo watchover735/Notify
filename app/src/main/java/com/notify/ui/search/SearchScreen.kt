@@ -2,6 +2,7 @@ package com.notify.ui.search
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -29,12 +30,16 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
-import android.widget.Toast
 import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PlayCircle
+import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SearchOff
@@ -51,10 +56,12 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import com.notify.ui.components.EqualizerIndicator
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -135,6 +142,8 @@ fun SearchScreen(
     val recentMediaItems by onlineSearchViewModel.recentMediaItems.collectAsState()
     val userPlaylists by onlineSearchViewModel.userPlaylists.collectAsState()
     val containingPlaylists by onlineSearchViewModel.playlistsContainingSelectedTrack.collectAsState()
+    val downloadedTracks by onlineSearchViewModel.downloadedTracks.collectAsState()
+    val playlistTracks by onlineSearchViewModel.playlistTracks.collectAsState()
     val context = LocalContext.current
 
     var showClearConfirmDialog by remember { mutableStateOf(false) }
@@ -168,8 +177,8 @@ fun SearchScreen(
         onlineSearchViewModel.onQueryChanged(searchQuery)
     }
 
-    val localResults = remember(searchQuery, allTracks) {
-        LocalSearchFilter.filter(allTracks, searchQuery)
+    val localResults = remember(searchQuery, allTracks, downloadedTracks, playlistTracks) {
+        onlineSearchViewModel.searchLocalLibrary(searchQuery, allTracks)
     }
 
     Box(modifier = modifier.fillMaxSize()) {
@@ -315,6 +324,12 @@ fun SearchScreen(
                                     onPlay = {
                                         onlineSearchViewModel.playRecentMediaItem(item, onPlayStream)
                                     },
+                                    onLike = {
+                                        onlineSearchViewModel.toggleLikeRecentItem(item)
+                                    },
+                                    onDownload = {
+                                        onlineSearchViewModel.downloadRecentItem(item)
+                                    },
                                     onAddToPlaylist = {
                                         itemToAddToPlaylist = item
                                     },
@@ -338,8 +353,8 @@ fun SearchScreen(
                     if (localResults.isNotEmpty()) {
                         item {
                             SectionHeader(
-                                title = "Local Library (${localResults.size})",
-                                icon = Icons.Default.MusicNote
+                                title = "From your library (${localResults.size})",
+                                icon = Icons.Default.LibraryMusic
                             )
                         }
                         itemsIndexed(
@@ -347,11 +362,10 @@ fun SearchScreen(
                             key = { _, item -> "local:${item.track.id.provider.name}:${item.track.id.rawId}" }
                         ) { index, item ->
                             val isCurrentPlaying = playbackState.currentTrack?.id == item.track.id
-                            TrackRow(
-                                track = item.track,
+                            LocalSearchResultRow(
+                                item = item,
                                 isCurrentTrack = isCurrentPlaying,
                                 isPlaying = isCurrentPlaying && playbackState.isPlaying,
-                                isSaf = item.track.id.rawId.contains("document") || item.track.id.rawId.contains("saf"),
                                 onClick = { onTrackClick(resultTracks, index) }
                             )
                         }
@@ -370,8 +384,8 @@ fun SearchScreen(
                     // ── ONLINE SEARCH ──────────────────────────────────────────────
                     item {
                         SectionHeader(
-                            title = "YouTube Music",
-                            icon = Icons.Default.PlayCircle
+                            title = "Beyond your library",
+                            icon = Icons.Default.Public
                         )
                     }
 
@@ -397,7 +411,7 @@ fun SearchScreen(
                                     )
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
-                                        text = if (searchQuery.isNotBlank()) "Search YouTube Music for \"$searchQuery\"" else "Press Search to search YouTube Music online",
+                                        text = if (searchQuery.isNotBlank()) "Search everywhere for \"$searchQuery\"" else "Search everywhere",
                                         color = if (searchQuery.isNotBlank()) EmeraldAccent else TextTertiary,
                                         fontSize = 12.sp,
                                         fontWeight = if (searchQuery.isNotBlank()) FontWeight.SemiBold else FontWeight.Normal
@@ -514,7 +528,7 @@ fun SearchScreen(
                                         Spacer(modifier = Modifier.width(10.dp))
                                         Column(modifier = Modifier.weight(1f)) {
                                             Text(
-                                                text = "Searching YouTube Music for \"${state.query}\"…",
+                                                text = "Searching everywhere for \"${state.query}\"…",
                                                 color = TextPrimary,
                                                 fontSize = 12.sp,
                                                 fontWeight = FontWeight.Medium
@@ -552,6 +566,12 @@ fun SearchScreen(
                                     onPlay = {
                                         onlineSearchViewModel.playCandidate(candidate, onPlayStream)
                                     },
+                                    onLike = {
+                                        onlineSearchViewModel.toggleLikeCandidate(candidate)
+                                    },
+                                    onDownload = {
+                                        onlineSearchViewModel.downloadCandidate(candidate)
+                                    },
                                     onAddToPlaylist = {
                                         candidateToAddToPlaylist = candidate
                                     }
@@ -564,7 +584,7 @@ fun SearchScreen(
                                 EmptyState(
                                     icon = Icons.Default.SearchOff,
                                     title = "No Online Results",
-                                    description = "No YouTube Music tracks found for \"${state.query}\"."
+                                    description = "No tracks found for \"${state.query}\"."
                                 )
                             }
                         }
@@ -634,8 +654,8 @@ fun SearchScreen(
                         item {
                             EmptyState(
                                 icon = Icons.Default.SearchOff,
-                                title = "No Local Results",
-                                description = "No local tracks match \"$searchQuery\". Tap above to search YouTube Music online."
+                                title = "Not in your library yet",
+                                description = "Ye gaana tumhari library me nahi mila. Poori duniya me dhoond ke dekhein?"
                             )
                         }
                     }
@@ -763,27 +783,17 @@ fun SearchScreen(
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .clickable {
-                                                if (isAlreadyInPlaylist) {
-                                                    Toast.makeText(context, "Already in playlist", Toast.LENGTH_SHORT).show()
-                                                } else {
-                                                    itemToAddToPlaylist?.let { item ->
-                                                        onlineSearchViewModel.addRecentItemToPlaylist(playlist.playlistId, item) { res ->
-                                                            if (res == OnlineSearchViewModel.AddToPlaylistUiResult.ALREADY_EXISTS) {
-                                                                Toast.makeText(context, "Already in playlist", Toast.LENGTH_SHORT).show()
-                                                            } else if (res == OnlineSearchViewModel.AddToPlaylistUiResult.ADDED) {
-                                                                Toast.makeText(context, "Added to playlist", Toast.LENGTH_SHORT).show()
-                                                            }
-                                                        }
-                                                    }
-                                                    candidateToAddToPlaylist?.let { cand ->
-                                                        onlineSearchViewModel.addCandidateToPlaylist(playlist.playlistId, cand) { res ->
-                                                            if (res == OnlineSearchViewModel.AddToPlaylistUiResult.ALREADY_EXISTS) {
-                                                                Toast.makeText(context, "Already in playlist", Toast.LENGTH_SHORT).show()
-                                                            } else if (res == OnlineSearchViewModel.AddToPlaylistUiResult.ADDED) {
-                                                                Toast.makeText(context, "Added to playlist", Toast.LENGTH_SHORT).show()
-                                                            }
-                                                        }
-                                                    }
+                                                val item = itemToAddToPlaylist
+                                                val cand = candidateToAddToPlaylist
+                                                itemToAddToPlaylist = null
+                                                candidateToAddToPlaylist = null
+                                                onlineSearchViewModel.setSelectedTrackForPlaylist(null)
+
+                                                if (item != null) {
+                                                    onlineSearchViewModel.addRecentItemToPlaylist(playlist.playlistId, playlist.title, item)
+                                                }
+                                                if (cand != null) {
+                                                    onlineSearchViewModel.addCandidateToPlaylist(playlist.playlistId, playlist.title, cand)
                                                 }
                                             }
                                             .padding(vertical = 8.dp),
@@ -888,16 +898,21 @@ fun SearchScreen(
                         onClick = {
                             if (newPlaylistTitle.isNotBlank()) {
                                 val title = newPlaylistTitle.trim()
-                                itemToAddToPlaylist?.let {
-                                    onlineSearchViewModel.createPlaylistAndAddRecentItem(title, it)
-                                }
-                                candidateToAddToPlaylist?.let {
-                                    onlineSearchViewModel.createPlaylistAndAddCandidate(title, it)
-                                }
+                                val item = itemToAddToPlaylist
+                                val cand = candidateToAddToPlaylist
                                 showNewPlaylistDialog = false
                                 newPlaylistTitle = ""
                                 itemToAddToPlaylist = null
                                 candidateToAddToPlaylist = null
+                                onlineSearchViewModel.setSelectedTrackForPlaylist(null)
+
+                                if (item != null) {
+                                    onlineSearchViewModel.createPlaylistAndAddRecentItem(title, item)
+                                } else if (cand != null) {
+                                    onlineSearchViewModel.createPlaylistAndAddCandidate(title, cand)
+                                } else {
+                                    onlineSearchViewModel.createPlaylist(title)
+                                }
                             }
                         },
                         enabled = newPlaylistTitle.isNotBlank()
@@ -959,6 +974,8 @@ private fun SectionHeader(title: String, icon: androidx.compose.ui.graphics.vect
 private fun RecentSongRow(
     item: RecentSearchItemEntity,
     onPlay: () -> Unit,
+    onLike: () -> Unit = {},
+    onDownload: () -> Unit = {},
     onAddToPlaylist: () -> Unit,
     onRemove: () -> Unit
 ) {
@@ -977,6 +994,7 @@ private fun RecentSongRow(
             verticalAlignment = Alignment.CenterVertically
         ) {
             AlbumArtwork(
+                trackId = item.id,
                 artworkUri = item.artworkUrl,
                 contentDescription = item.title,
                 modifier = Modifier.size(52.dp),
@@ -1006,23 +1024,51 @@ private fun RecentSongRow(
             }
 
             IconButton(
+                onClick = onLike,
+                modifier = Modifier
+                    .size(32.dp)
+                    .testTag("btn_like_recent_${item.id}")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.FavoriteBorder,
+                    contentDescription = "Like song",
+                    tint = TextSecondary,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+
+            IconButton(
+                onClick = onDownload,
+                modifier = Modifier
+                    .size(32.dp)
+                    .testTag("btn_download_recent_${item.id}")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Download,
+                    contentDescription = "Download song",
+                    tint = TextSecondary,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+
+            IconButton(
                 onClick = onAddToPlaylist,
                 modifier = Modifier
-                    .size(36.dp)
+                    .size(32.dp)
                     .testTag("btn_add_to_playlist_${item.id}")
             ) {
                 Icon(
                     imageVector = Icons.Default.Add,
                     contentDescription = "Add to playlist",
                     tint = TextSecondary,
-                    modifier = Modifier.size(20.dp)
+                    modifier = Modifier.size(18.dp)
                 )
             }
 
             IconButton(
                 onClick = onRemove,
                 modifier = Modifier
-                    .size(36.dp)
+                    .size(32.dp)
                     .testTag("btn_remove_recent_${item.id}")
             ) {
                 Icon(
@@ -1041,6 +1087,8 @@ private fun OnlineCandidateRow(
     candidate: YouTubeCandidate,
     isResolving: Boolean = false,
     onPlay: () -> Unit,
+    onLike: () -> Unit = {},
+    onDownload: () -> Unit = {},
     onAddToPlaylist: () -> Unit = {}
 ) {
     val durationSec = candidate.durationMs / 1000
@@ -1062,8 +1110,8 @@ private fun OnlineCandidateRow(
                 .padding(horizontal = 10.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Thumbnail with AlbumArtwork (supports Coil candidate.artworkUrl)
             AlbumArtwork(
+                trackId = candidate.videoId,
                 artworkUri = candidate.artworkUrl,
                 contentDescription = candidate.title,
                 modifier = Modifier.size(42.dp),
@@ -1094,6 +1142,34 @@ private fun OnlineCandidateRow(
                     fontSize = 10.sp,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            IconButton(
+                onClick = onLike,
+                modifier = Modifier
+                    .size(32.dp)
+                    .testTag("btn_like_candidate_${candidate.videoId}")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.FavoriteBorder,
+                    contentDescription = "Like",
+                    tint = TextSecondary,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+
+            IconButton(
+                onClick = onDownload,
+                modifier = Modifier
+                    .size(32.dp)
+                    .testTag("btn_download_candidate_${candidate.videoId}")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Download,
+                    contentDescription = "Download",
+                    tint = TextSecondary,
+                    modifier = Modifier.size(18.dp)
                 )
             }
 
@@ -1150,3 +1226,129 @@ private fun YouTubeCandidate.asDomainTrack(): Track = Track(
     artworkUri = artworkUrl,
     source = AudioSource.Remote(ProviderId.YOUTUBE, videoId)
 )
+
+@Composable
+fun LocalSearchResultRow(
+    item: LocalSearchResult,
+    isCurrentTrack: Boolean,
+    isPlaying: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        onClick = onClick,
+        colors = CardDefaults.cardColors(
+            containerColor = if (isCurrentTrack) DarkSurfaceVariant else DarkSurface
+        ),
+        shape = RoundedCornerShape(10.dp),
+        modifier = modifier
+            .fillMaxWidth()
+            .border(
+                1.dp,
+                if (isCurrentTrack) EmeraldAccent.copy(alpha = 0.5f) else DarkSurfaceBorder,
+                RoundedCornerShape(10.dp)
+            )
+            .testTag("local_result_row_${item.track.id.rawId}")
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier.size(44.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                AlbumArtwork(
+                    track = item.track,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clip(RoundedCornerShape(6.dp)),
+                    shape = RoundedCornerShape(6.dp),
+                    targetSizePx = 128
+                )
+                if (isPlaying) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(6.dp)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        EqualizerIndicator(isPlaying = true, color = EmeraldAccent)
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.width(12.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = item.track.title,
+                    color = if (isCurrentTrack) EmeraldAccent else TextPrimary,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = item.track.artist,
+                        color = TextSecondary,
+                        fontSize = 11.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Surface(
+                        shape = RoundedCornerShape(4.dp),
+                        color = if (item.isDownloaded) EmeraldAccent.copy(alpha = 0.15f) else DarkSurfaceVariant,
+                        border = BorderStroke(
+                            1.dp,
+                            if (item.isDownloaded) EmeraldAccent.copy(alpha = 0.4f) else DarkSurfaceBorder
+                        )
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        ) {
+                            if (item.isDownloaded) {
+                                Icon(
+                                    imageVector = Icons.Default.CheckCircle,
+                                    contentDescription = "Downloaded",
+                                    tint = EmeraldAccent,
+                                    modifier = Modifier.size(10.dp)
+                                )
+                                Spacer(modifier = Modifier.width(3.dp))
+                            }
+                            Text(
+                                text = item.badgeText,
+                                color = if (item.isDownloaded) EmeraldAccent else TextSecondary,
+                                fontSize = 9.sp,
+                                fontWeight = if (item.isDownloaded) FontWeight.Bold else FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun formatDuration(durationMs: Long): String {
+    if (durationMs <= 0L) return "--:--"
+    val totalSeconds = durationMs / 1000
+    val seconds = totalSeconds % 60
+    val minutes = (totalSeconds / 60) % 60
+    val hours = totalSeconds / 3600
+    return if (hours > 0) {
+        String.format(java.util.Locale.US, "%d:%02d:%02d", hours, minutes, seconds)
+    } else {
+        String.format(java.util.Locale.US, "%d:%02d", minutes, seconds)
+    }
+}
+

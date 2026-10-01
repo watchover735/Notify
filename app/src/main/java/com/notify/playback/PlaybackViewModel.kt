@@ -145,8 +145,14 @@ class PlaybackViewModel(
         controller.toggleAutoplay()
     }
 
-    fun playStream(track: Track, streamUrl: String, origin: PlaybackOrigin, requestId: String? = null) {
-        controller.playStream(track, streamUrl, origin, requestId)
+    fun playStream(
+        track: Track,
+        streamUrl: String,
+        origin: PlaybackOrigin,
+        requestId: String? = null,
+        contextTracks: List<Track> = emptyList()
+    ) {
+        controller.playStream(track, streamUrl, origin, requestId, contextTracks)
         // Reset auto-save for new track
         resetAutoSave(track)
     }
@@ -185,9 +191,12 @@ class PlaybackViewModel(
         val isLiked = isCurrentTrackLiked.value
         viewModelScope.launch {
             if (isLiked) {
-                playlistRepository.removeTrackFromLikedSongs(provider, sourceId)
+                val removed = playlistRepository.removeTrackFromLikedSongs(provider, sourceId)
+                if (removed) {
+                    com.notify.ui.SnackbarManager.emit(com.notify.ui.SnackbarEvent.RemovedFromLikedSongs)
+                }
             } else {
-                playlistRepository.saveTrackToLikedSongs(
+                val res = playlistRepository.saveTrackToLikedSongs(
                     title = currentTrack.title,
                     artist = currentTrack.artist,
                     album = currentTrack.album,
@@ -196,6 +205,11 @@ class PlaybackViewModel(
                     provider = provider,
                     providerSourceId = sourceId
                 )
+                if (res is com.notify.download.db.AddTrackResult.Added || res is com.notify.download.db.AddTrackResult.AlreadyExists) {
+                    com.notify.ui.SnackbarManager.emit(com.notify.ui.SnackbarEvent.AddedToLikedSongs)
+                } else if (res is com.notify.download.db.AddTrackResult.Failure) {
+                    com.notify.ui.SnackbarManager.emit(com.notify.ui.SnackbarEvent.ActionFailed("Failed to update Liked Songs"))
+                }
             }
         }
     }
@@ -208,6 +222,8 @@ class PlaybackViewModel(
             else -> currentTrack.id.rawId
         }
         viewModelScope.launch {
+            val playlist = playlistRepository.getPlaylistById(playlistId)
+            val playlistName = playlist?.title ?: "playlist"
             val res = playlistRepository.addTrackToPlaylistIfAbsent(
                 playlistId = playlistId,
                 title = currentTrack.title,
@@ -218,7 +234,32 @@ class PlaybackViewModel(
                 provider = provider,
                 providerSourceId = sourceId
             )
-            onResult(res is com.notify.download.db.AddTrackResult.Added || res is com.notify.download.db.AddTrackResult.AlreadyExists)
+            val success = res is com.notify.download.db.AddTrackResult.Added ||
+                res is com.notify.download.db.AddTrackResult.AlreadyExists
+            onResult(success)
+
+            when (res) {
+                is com.notify.download.db.AddTrackResult.Added -> {
+                    val canonicalTrackId = playlistRepository.resolveCanonicalTrackId(provider, sourceId)
+                    com.notify.ui.SnackbarManager.emit(
+                        com.notify.ui.SnackbarEvent.AddedToPlaylist(
+                            playlistName = playlistName,
+                            onUndo = {
+                                viewModelScope.launch {
+                                    playlistRepository.removeTrackFromPlaylistByTrackId(playlistId, canonicalTrackId)
+                                }
+                            }
+                        )
+                    )
+                }
+                is com.notify.download.db.AddTrackResult.AlreadyExists -> {
+                    com.notify.ui.SnackbarManager.emit(com.notify.ui.SnackbarEvent.AlreadyInPlaylist(playlistName))
+                }
+                is com.notify.download.db.AddTrackResult.Failure -> {
+                    com.notify.ui.SnackbarManager.emit(com.notify.ui.SnackbarEvent.ActionFailed("Failed to add to $playlistName"))
+                }
+                else -> {}
+            }
         }
     }
 
@@ -234,6 +275,7 @@ class PlaybackViewModel(
             val isDownloaded = isCurrentTrackDownloaded.value
             if (isDownloaded) {
                 downloadManager.removeDownloadForTrack(canonicalTrackId)
+                com.notify.ui.SnackbarManager.emit(com.notify.ui.SnackbarEvent.Message("Download removed"))
             } else {
                 playlistRepository.addTrackToPlaylistIfAbsent(
                     playlistId = PlaylistRepository.LIKED_SONGS_PLAYLIST_ID,
@@ -246,6 +288,7 @@ class PlaybackViewModel(
                     providerSourceId = sourceId
                 )
                 downloadManager.enqueueTrackDownload(canonicalTrackId, bucket = DownloadBucket.PINNED)
+                com.notify.ui.SnackbarManager.emit(com.notify.ui.SnackbarEvent.DownloadStarted(currentTrack.title))
             }
         }
     }
@@ -254,12 +297,22 @@ class PlaybackViewModel(
         controller.clearError()
     }
 
+    fun setShuffleMode(mode: com.notify.core.model.ShuffleMode) {
+        controller.setShuffleMode(mode)
+    }
+
     fun setShuffleEnabled(enabled: Boolean) {
         controller.setShuffleEnabled(enabled)
     }
 
     fun toggleShuffle() {
-        controller.setShuffleEnabled(!uiState.value.shuffleEnabled)
+        val nextMode = controller.cycleShuffleMode()
+        val message = when (nextMode) {
+            com.notify.core.model.ShuffleMode.SHUFFLE -> "Shuffle on"
+            com.notify.core.model.ShuffleMode.SMART_SHUFFLE -> "Smart Shuffle on"
+            com.notify.core.model.ShuffleMode.OFF -> "Shuffle off"
+        }
+        com.notify.ui.SnackbarManager.tryEmit(message)
     }
 
     fun setRepeatMode(mode: com.notify.core.model.RepeatMode) {

@@ -12,7 +12,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -26,6 +31,7 @@ import coil.compose.SubcomposeAsyncImage
 import coil.request.ImageRequest
 import com.notify.core.model.AudioSource
 import com.notify.core.model.Track
+import com.notify.core.playback.ArtworkResolution
 import com.notify.ui.artwork.LocalArtworkLoader
 import com.notify.ui.theme.DarkSurface
 import com.notify.ui.theme.DarkSurfaceBorder
@@ -35,24 +41,33 @@ import com.notify.ui.theme.EmeraldAccent
 
 /**
  * Renders album artwork with priority:
- * 1. Spotify imported track/album artwork or explicit artworkUri (via Coil)
- * 2. Selected YouTube candidate thumbnail
- * 3. Local MediaStore / SAF thumbnail (via LocalArtworkLoader)
- * 4. Tasteful gradient / music-note placeholder
+ * 1. High-resolution provider artwork (via ArtworkResolution and Coil fallback chain)
+ * 2. Local MediaStore / SAF thumbnail (via LocalArtworkLoader)
+ * 3. Tasteful gradient / music-note placeholder
  *
  * Invariant: Never calls MediaMetadataRetriever on remote audio streams.
  */
 @Composable
 fun AlbumArtwork(
     track: Track? = null,
+    trackId: String? = track?.id?.rawId,
     artworkUri: String? = track?.artworkUri,
     modifier: Modifier = Modifier,
     shape: Shape = RoundedCornerShape(8.dp),
     targetSizePx: Int = 512,
     contentDescription: String? = null
 ) {
-    val effectiveUri = artworkUri ?: track?.artworkUri
-    val isRemote = track?.source is AudioSource.Remote
+    val rawUri = artworkUri ?: track?.artworkUri
+    val context = LocalContext.current
+    val effectiveTrackId = trackId ?: track?.id?.rawId
+    val localCachedUri = remember(effectiveTrackId, rawUri) {
+        val id = effectiveTrackId ?: if (rawUri != null && !rawUri.startsWith("http")) rawUri else null
+        if (id != null) {
+            com.notify.core.playback.LocalArtworkStore.getArtworkUri(id, context)?.toString()
+        } else null
+    }
+    val effectiveUri = localCachedUri ?: rawUri
+    val isRemote = track?.source is AudioSource.Remote && localCachedUri == null
 
     Box(
         modifier = modifier
@@ -62,13 +77,29 @@ fun AlbumArtwork(
         contentAlignment = Alignment.Center
     ) {
         if (!effectiveUri.isNullOrBlank()) {
-            // Priority 1 & 2: Remote/Explicit Artwork URL loaded via Coil
-            SubcomposeAsyncImage(
-                model = ImageRequest.Builder(LocalContext.current)
-                    .data(effectiveUri)
+            val candidates = remember(effectiveUri, targetSizePx) {
+                ArtworkResolution.highResArtworkCandidates(effectiveUri, targetSizePx)
+            }
+            var candidateIndex by remember(candidates) { mutableStateOf(0) }
+            val currentUrl = candidates.getOrNull(candidateIndex) ?: effectiveUri
+
+            val context = LocalContext.current
+            val imageRequest = remember(currentUrl, targetSizePx) {
+                ImageRequest.Builder(context)
+                    .data(currentUrl)
                     .crossfade(true)
-                    .size(targetSizePx, targetSizePx)
-                    .build(),
+                    .apply {
+                        if (targetSizePx >= 800) {
+                            size(coil.size.Size.ORIGINAL)
+                        } else {
+                            size(targetSizePx, targetSizePx)
+                        }
+                    }
+                    .build()
+            }
+
+            SubcomposeAsyncImage(
+                model = imageRequest,
                 contentDescription = contentDescription ?: track?.title ?: "Album Artwork",
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
@@ -76,11 +107,19 @@ fun AlbumArtwork(
                     ArtworkPlaceholder()
                 },
                 error = {
-                    ArtworkPlaceholder()
+                    if (candidateIndex < candidates.lastIndex) {
+                        // Resilient fallback: Try next candidate in resolution chain (e.g. maxres -> sd -> hq)
+                        DisposableEffect(candidateIndex) {
+                            candidateIndex++
+                            onDispose {}
+                        }
+                    } else {
+                        ArtworkPlaceholder()
+                    }
                 }
             )
         } else if (track != null && !isRemote) {
-            // Priority 3: Local Storage / MediaStore artwork (only for local tracks!)
+            // Local Storage / MediaStore artwork (only for local tracks!)
             val context = LocalContext.current.applicationContext
             val artworkBitmap = produceState<Bitmap?>(initialValue = null, key1 = track.id.rawId) {
                 value = LocalArtworkLoader.getInstance(context).loadArtwork(track, targetSizePx)
@@ -98,7 +137,7 @@ fun AlbumArtwork(
                 ArtworkPlaceholder()
             }
         } else {
-            // Priority 4: Generated placeholder (remote stream with no artwork or null track)
+            // Generated placeholder (remote stream with no artwork or null track)
             ArtworkPlaceholder()
         }
     }

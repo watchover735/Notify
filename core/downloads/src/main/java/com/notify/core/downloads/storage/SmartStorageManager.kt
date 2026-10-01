@@ -31,7 +31,12 @@ class SmartStorageManager(
      */
     fun canDownload(estimatedSizeBytes: Long): Boolean {
         val freeSpace = offlineStorage.availableFreeSpaceBytes()
-        val reserve = preferences.freeSpaceReserveBytes
+        val targetReserve = preferences.freeSpaceReserveBytes
+        val reserve = if (freeSpace < targetReserve * 2) {
+            minOf(targetReserve, (freeSpace * 0.1).toLong().coerceAtLeast(10_000_000L))
+        } else {
+            targetReserve
+        }
         val available = freeSpace - reserve
 
         if (available < estimatedSizeBytes) {

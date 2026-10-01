@@ -139,7 +139,7 @@ fun QueueBottomSheet(
                             track = track,
                             modifier = Modifier.size(40.dp),
                             shape = RoundedCornerShape(6.dp),
-                            targetSizePx = 128
+                            targetSizePx = 192
                         )
 
                         Spacer(modifier = Modifier.width(10.dp))

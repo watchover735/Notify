@@ -11,5 +11,6 @@ enum class PlaybackOrigin {
     PLAYLIST,
     MANUAL_QUEUE,
     RADIO_AUTOPLAY,
-    OFFLINE_DOWNLOAD
+    OFFLINE_DOWNLOAD,
+    SMART_SHUFFLE
 }

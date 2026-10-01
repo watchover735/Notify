@@ -10,6 +10,15 @@ enum class RepeatMode {
 }
 
 /**
+ * Shuffle modes supported by the player session.
+ */
+enum class ShuffleMode {
+    OFF,
+    SHUFFLE,
+    SMART_SHUFFLE
+}
+
+/**
  * Durable snapshot of player state persisted to Room for process death recovery.
  */
 data class PlaybackSnapshot(
@@ -19,7 +28,8 @@ data class PlaybackSnapshot(
     val repeatMode: RepeatMode = RepeatMode.OFF,
     val isShuffled: Boolean = false,
     val isAutoplayEnabled: Boolean = true,
-    val radioSeedSourceId: String? = null
+    val radioSeedSourceId: String? = null,
+    val shuffleMode: ShuffleMode = if (isShuffled) ShuffleMode.SHUFFLE else ShuffleMode.OFF
 ) {
     val currentEntry: QueueEntry?
         get() = queue.getOrNull(currentIndex)

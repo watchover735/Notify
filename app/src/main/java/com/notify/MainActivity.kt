@@ -64,6 +64,9 @@ class MainActivity : ComponentActivity() {
             com.notify.download.engine.OfflineDownloadManager(applicationContext).recoverOnStartup()
         }
 
+        // Non-blocking in-app update check via GitHub Releases
+        com.notify.updater.AppUpdater.checkForUpdates(this)
+
         setContent {
             NotiFyTheme {
                 NotiFyApp(
@@ -76,6 +79,7 @@ class MainActivity : ComponentActivity() {
                         permissionLauncher.launch(libraryViewModel.requiredPermission())
                     }
                 )
+                com.notify.updater.AppUpdateDialogHost()
             }
         }
     }

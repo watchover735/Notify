@@ -9,6 +9,7 @@ import com.notify.core.model.ProviderId
 import com.notify.core.model.QueueEntry
 import com.notify.core.model.QueueOrigin
 import com.notify.core.model.RepeatMode
+import com.notify.core.model.ShuffleMode
 import com.notify.core.model.Track
 import com.notify.core.model.TrackId
 import org.json.JSONArray
@@ -42,6 +43,7 @@ class PlaybackSnapshotStore(
                 put("currentPositionMs", snapshot.currentPositionMs)
                 put("repeatMode", snapshot.repeatMode.name)
                 put("isShuffled", snapshot.isShuffled)
+                put("shuffleMode", snapshot.shuffleMode.name)
                 put("isAutoplayEnabled", snapshot.isAutoplayEnabled)
                 put("radioSeedSourceId", snapshot.radioSeedSourceId ?: JSONObject.NULL)
 
@@ -117,6 +119,8 @@ class PlaybackSnapshotStore(
             val repeatModeStr = root.optString("repeatMode", RepeatMode.OFF.name)
             val repeatMode = try { RepeatMode.valueOf(repeatModeStr) } catch (_: Exception) { RepeatMode.OFF }
             val isShuffled = root.optBoolean("isShuffled", false)
+            val shuffleModeStr = root.optString("shuffleMode", if (isShuffled) ShuffleMode.SHUFFLE.name else ShuffleMode.OFF.name)
+            val shuffleMode = try { ShuffleMode.valueOf(shuffleModeStr) } catch (_: Exception) { if (isShuffled) ShuffleMode.SHUFFLE else ShuffleMode.OFF }
             val isAutoplayEnabled = root.optBoolean("isAutoplayEnabled", true)
             val radioSeed = if (root.isNull("radioSeedSourceId")) null else root.optString("radioSeedSourceId")
 
@@ -181,7 +185,8 @@ class PlaybackSnapshotStore(
                 repeatMode = repeatMode,
                 isShuffled = isShuffled,
                 isAutoplayEnabled = isAutoplayEnabled,
-                radioSeedSourceId = radioSeed
+                radioSeedSourceId = radioSeed,
+                shuffleMode = shuffleMode
             )
         } catch (e: Exception) {
             Log.w(TAG, "Failed or malformed playback snapshot ignored safely: ${e.message}")

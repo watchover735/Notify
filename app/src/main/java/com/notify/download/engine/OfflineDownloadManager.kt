@@ -485,13 +485,23 @@ class OfflineDownloadManager(
         return false
     }
 
-    suspend fun getOfflinePlaybackUri(trackId: String): android.net.Uri? {
+    fun getContentUri(relativeStorageKey: String): android.net.Uri? {
+        return storage.getContentUri(relativeStorageKey)
+    }
+
+    fun isFileValid(relativeStorageKey: String): Boolean {
+        return storage.isFileValid(relativeStorageKey)
+    }
+
+    suspend fun getOfflinePlaybackUri(trackId: String, touchAccess: Boolean = false): android.net.Uri? {
         val download = downloadDao.getCompletedForTrack(trackId) ?: return null
         if (!storage.isFileValid(download.relativeStorageKey)) {
             downloadDao.updateStatus(download.downloadId, OfflineDownloadStatus.EVICTED)
             return null
         }
-        downloadDao.touchAccessTime(download.downloadId)
+        if (touchAccess) {
+            downloadDao.touchAccessTime(download.downloadId)
+        }
         return storage.getContentUri(download.relativeStorageKey)
     }
 
@@ -504,13 +514,15 @@ class OfflineDownloadManager(
         return downloadDao.getCompletedForTrack(trackId)
     }
 
-    suspend fun getOfflinePlaybackUriForSource(sourceId: String): android.net.Uri? {
+    suspend fun getOfflinePlaybackUriForSource(sourceId: String, touchAccess: Boolean = false): android.net.Uri? {
         val download = downloadDao.getCompletedForSource(sourceId) ?: return null
         if (!storage.isFileValid(download.relativeStorageKey)) {
             downloadDao.updateStatus(download.downloadId, OfflineDownloadStatus.EVICTED)
             return null
         }
-        downloadDao.touchAccessTime(download.downloadId)
+        if (touchAccess) {
+            downloadDao.touchAccessTime(download.downloadId)
+        }
         return storage.getContentUri(download.relativeStorageKey)
     }
 

@@ -340,6 +340,23 @@ class TrackDownloadWorker(
                             )
                             queueDao.markCompleted(trackId)
                             Log.d(TAG, "Successfully validated and DOWNLOADED: $trackId (${validation.fileSizeBytes} bytes, ${validation.durationMs}ms)")
+
+                            // Cache HD artwork locally so it is guaranteed available 100% offline
+                            val artUrl = track?.artworkUrl ?: track?.artworkUri ?: queueItem.artworkUrl
+                            if (!artUrl.isNullOrBlank()) {
+                                try {
+                                    com.notify.core.playback.LocalArtworkStore.downloadAndCacheArtwork(
+                                        trackId = trackId,
+                                        remoteUrl = artUrl,
+                                        context = applicationContext
+                                    )
+                                } catch (e: Exception) {
+                                    Log.w(TAG, "Failed caching artwork for $trackId: ${e.message}")
+                                }
+                            }
+
+                            val songTitle = db.trackDao().getTrackById(trackId)?.title ?: "track"
+                            com.notify.ui.SnackbarManager.tryEmit(com.notify.ui.SnackbarEvent.DownloadComplete(songTitle))
                             return@withContext Result.success()
                         }
                         is AudioValidationResult.Invalid -> {
@@ -383,6 +400,19 @@ class TrackDownloadWorker(
         queueDao.markFailed(trackId, errorMessage)
         downloadDao.markFailed(downloadId, errorMessage)
         Log.e(TAG, "Permanent failure recorded for $trackId: $errorMessage")
+        val db = NotiFyDatabase.getInstance(applicationContext)
+        val songTitle = db.trackDao().getTrackById(trackId)?.title ?: "track"
+        val appContext = applicationContext
+        com.notify.ui.SnackbarManager.tryEmit(
+            com.notify.ui.SnackbarEvent.DownloadFailed(
+                songName = songTitle,
+                onRetry = {
+                    kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                        OfflineDownloadManager(appContext).enqueueTrackDownload(trackId)
+                    }
+                }
+            )
+        )
     }
 
     /**

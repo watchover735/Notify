@@ -11,4 +11,6 @@ object SupabaseConfig {
     const val RESOLVE_SOUNDCLOUD_URL = "$BASE_URL/resolve-soundcloud"
     const val RESOLVE_DEEZER_URL = "$BASE_URL/resolve-deezer"
     const val RESOLVE_COBALT_URL = "$BASE_URL/resolve-cobalt"
+    const val TRENDING_JIOSAAVN_URL = "$BASE_URL/trending-jiosaavn"
+    const val CURATED_ARTISTS_URL = "$BASE_URL/curated-artists"
 }

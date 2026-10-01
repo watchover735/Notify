@@ -14,8 +14,11 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -27,6 +30,7 @@ import androidx.navigation.compose.rememberNavController
 import com.notify.download.db.NotiFyDatabase
 import com.notify.download.db.PlaylistRepository
 import com.notify.playback.PlaybackViewModel
+import com.notify.ui.components.NotiFySnackbar
 import com.notify.ui.navigation.NotiFyDestination
 import com.notify.ui.navigation.NotiFyNavHost
 import com.notify.ui.player.MiniPlayer
@@ -61,8 +65,108 @@ fun NotiFyApp(
     val userPlaylists by playbackViewModel.userPlaylists.collectAsStateWithLifecycle()
     val playlistsContainingCurrentTrack by playbackViewModel.playlistsContainingCurrentTrack.collectAsStateWithLifecycle()
 
+    // ── Snackbar state ────────────────────────────────────────────────────────
+    var snackbarMessage by remember { mutableStateOf<String?>(null) }
+    var snackbarAction by remember { mutableStateOf<Pair<String, () -> Unit>?>(null) }
+
+    // Collect app-wide snackbar events
+    LaunchedEffect(Unit) {
+        SnackbarManager.events.collect { event ->
+            when (event) {
+                is SnackbarEvent.AddedToLikedSongs -> {
+                    snackbarMessage = "Added to Liked Songs"
+                    snackbarAction = null
+                }
+                is SnackbarEvent.RemovedFromLikedSongs -> {
+                    snackbarMessage = "Removed from Liked Songs"
+                    snackbarAction = null
+                }
+                is SnackbarEvent.DownloadStarted -> {
+                    snackbarMessage = "Download started"
+                    snackbarAction = null
+                }
+                is SnackbarEvent.DownloadComplete -> {
+                    snackbarMessage = "Downloaded ${event.songName}"
+                    snackbarAction = null
+                }
+                is SnackbarEvent.DownloadFailed -> {
+                    snackbarMessage = "Download failed"
+                    snackbarAction = event.onRetry?.let { "Retry" to it }
+                }
+                is SnackbarEvent.AddedToPlaylist -> {
+                    snackbarMessage = "Added to ${event.playlistName}"
+                    snackbarAction = event.onUndo?.let { "Undo" to it }
+                }
+                is SnackbarEvent.AlreadyInPlaylist -> {
+                    snackbarMessage = "Already in ${event.playlistName}"
+                    snackbarAction = null
+                }
+                is SnackbarEvent.RemovedFromPlaylist -> {
+                    snackbarMessage = "Removed from ${event.playlistName}"
+                    snackbarAction = event.onUndo?.let { "Undo" to it }
+                }
+                is SnackbarEvent.PlaylistCreated -> {
+                    snackbarMessage = "Playlist '${event.playlistName}' created"
+                    snackbarAction = null
+                }
+                is SnackbarEvent.PlayFailed -> {
+                    snackbarMessage = "Couldn't play this song"
+                    snackbarAction = null
+                }
+                is SnackbarEvent.NoInternet -> {
+                    snackbarMessage = "No internet connection"
+                    snackbarAction = null
+                }
+                is SnackbarEvent.QueueExhausted -> {
+                    snackbarMessage = "No more songs to play"
+                    snackbarAction = null
+                }
+                is SnackbarEvent.ImportSucceeded -> {
+                    snackbarMessage = "Imported '${event.playlistName}' · ${event.trackCount} tracks"
+                    snackbarAction = null
+                }
+                is SnackbarEvent.ImportFailed -> {
+                    snackbarMessage = "Import failed: ${event.reason}"
+                    snackbarAction = null
+                }
+                is SnackbarEvent.ArtistFollowed -> {
+                    snackbarMessage = "Added ${event.artistName} to your artists"
+                    snackbarAction = null
+                }
+                is SnackbarEvent.ArtistUnfollowed -> {
+                    snackbarMessage = "Removed ${event.artistName}"
+                    snackbarAction = event.onUndo?.let { "Undo" to it }
+                }
+                is SnackbarEvent.ActionFailed -> {
+                    snackbarMessage = event.message
+                    snackbarAction = null
+                }
+                is SnackbarEvent.Message -> {
+                    snackbarMessage = event.message
+                    snackbarAction = if (event.actionLabel != null && event.onAction != null) {
+                        event.actionLabel to event.onAction
+                    } else null
+                }
+            }
+        }
+    }
+
     Scaffold(
         containerColor = DarkBackground,
+        snackbarHost = {
+            snackbarMessage?.let { msg ->
+                val (label, action) = snackbarAction ?: (null to null)
+                NotiFySnackbar(
+                    message = msg,
+                    actionLabel = label,
+                    onAction = action,
+                    onDismiss = {
+                        snackbarMessage = null
+                        snackbarAction = null
+                    }
+                )
+            }
+        },
         bottomBar = {
             if (!isNowPlayingFullscreen) {
                 Column {
@@ -151,6 +255,9 @@ fun NotiFyApp(
                 },
                 onPlayStream = { track, streamUrl, origin ->
                     playbackViewModel.playStream(track, streamUrl, origin)
+                },
+                onPlayStreamWithContext = { track, streamUrl, origin, contextTracks ->
+                    playbackViewModel.playStream(track, streamUrl, origin, contextTracks = contextTracks)
                 },
                 onPlayQueue = { tracks, startIndex ->
                     playbackViewModel.playQueue(tracks, startIndex)

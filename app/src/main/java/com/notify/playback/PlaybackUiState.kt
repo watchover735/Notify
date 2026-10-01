@@ -12,6 +12,8 @@ data class PlaybackUiState(
     val currentTrack: Track? = null,
     val isPlaying: Boolean = false,
     val isBuffering: Boolean = false,
+    /** True while the stream URL is being resolved after a tap — drives MiniPlayer spinner. */
+    val isResolvingStream: Boolean = false,
     val currentPositionMs: Long = 0L,
     val durationMs: Long = 0L,
     val queue: List<Track> = emptyList(),
@@ -23,6 +25,7 @@ data class PlaybackUiState(
     val isControllerConnected: Boolean = isConnected,
     val isSeekable: Boolean = true,
     val shuffleEnabled: Boolean = false,
+    val shuffleMode: com.notify.core.model.ShuffleMode = if (shuffleEnabled) com.notify.core.model.ShuffleMode.SHUFFLE else com.notify.core.model.ShuffleMode.OFF,
     val repeatMode: RepeatMode = RepeatMode.OFF,
     val isAutoplayEnabled: Boolean = true,
     val isPreparingNext: Boolean = false,

@@ -67,6 +67,9 @@ interface TrackDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertSource(source: TrackSourceEntity)
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertSources(sources: List<TrackSourceEntity>)
+
     @Query("UPDATE tracks SET artworkUri = :artworkUri, artworkUrl = :artworkUrl WHERE id = :trackId")
     suspend fun updateArtwork(trackId: String, artworkUri: String?, artworkUrl: String?)
 
@@ -182,4 +185,10 @@ interface TrackDao {
           AND (:now - lastArtworkAttemptEpochMs) >= :staleCutoffMs
     """)
     suspend fun resetStaleInProgressTracks(now: Long, staleCutoffMs: Long): Int
+
+    @Query("SELECT * FROM tracks")
+    fun observeAllTracks(): kotlinx.coroutines.flow.Flow<List<TrackEntity>>
+
+    @Query("SELECT * FROM tracks")
+    suspend fun getAllTracks(): List<TrackEntity>
 }

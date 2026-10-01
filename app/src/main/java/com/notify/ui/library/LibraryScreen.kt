@@ -1,5 +1,9 @@
 package com.notify.ui.library
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -17,27 +21,30 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.GridItemSpan
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Input
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Storage
+import androidx.compose.material.icons.filled.Shuffle
+import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -47,19 +54,17 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -67,41 +72,45 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.notify.download.db.PlaylistSummary
-import com.notify.playback.PlaybackUiState
-import com.notify.ui.components.EmptyState
-import com.notify.ui.components.ErrorCard
-import com.notify.ui.components.PlaylistArtwork
-import com.notify.ui.theme.DarkBackground
-import com.notify.ui.theme.DarkSurface
-import com.notify.ui.theme.DarkSurfaceBorder
-import com.notify.ui.theme.DarkSurfaceElevated
-import com.notify.ui.theme.DarkSurfaceVariant
-import com.notify.ui.theme.EmeraldAccent
-import com.notify.ui.theme.EmeraldLight
-import com.notify.ui.theme.ErrorRed
-import com.notify.ui.theme.TextPrimary
-import com.notify.ui.theme.TextSecondary
-import com.notify.ui.theme.TextTertiary
+import coil.compose.SubcomposeAsyncImage
 import com.notify.core.model.AudioSource
 import com.notify.core.model.DownloadBucket
 import com.notify.core.model.Track
 import com.notify.core.model.TrackId
-import com.notify.download.engine.StorageStats
+import com.notify.download.db.PlaylistRepository
+import com.notify.download.db.PlaylistSummary
+import com.notify.download.stream.FollowedArtist
+import com.notify.playback.PlaybackUiState
 import com.notify.ui.components.AlbumArtwork
+import com.notify.ui.components.EmptyState
 import com.notify.ui.components.EqualizerIndicator
+import com.notify.ui.components.PlaylistArtwork
+import com.notify.ui.theme.DarkBackground
+import com.notify.ui.theme.DarkSurface
+import com.notify.ui.theme.DarkSurfaceBorder
+import com.notify.ui.theme.DarkSurfaceVariant
+import com.notify.ui.theme.EmeraldAccent
+import com.notify.ui.theme.TextTertiary
+import androidx.compose.runtime.collectAsState
+import androidx.compose.ui.platform.LocalContext
+import com.notify.core.preferences.UserProfilePreferences
+import com.notify.ui.theme.ErrorRed
+import com.notify.ui.theme.TextPrimary
+import com.notify.ui.theme.TextSecondary
+import com.notify.ui.theme.TextTertiary
 
-enum class DownloadSortOrder(val displayName: String) {
-    RECENT("Recent"),
-    TITLE("Title"),
-    SIZE("Size")
+enum class LibrarySortOrder(val displayName: String) {
+    RECENTS("Recents"),
+    ALPHABETICAL("Alphabetical"),
+    CREATOR("Creator")
 }
 
 private fun formatBytes(bytes: Long): String {
@@ -117,19 +126,6 @@ private fun formatBytes(bytes: Long): String {
     }
 }
 
-private fun formatDuration(durationMs: Long): String {
-    if (durationMs <= 0L) return "--:--"
-    val totalSeconds = durationMs / 1000
-    val seconds = totalSeconds % 60
-    val minutes = (totalSeconds / 60) % 60
-    val hours = totalSeconds / 3600
-    return if (hours > 0) {
-        String.format(java.util.Locale.US, "%d:%02d:%02d", hours, minutes, seconds)
-    } else {
-        String.format(java.util.Locale.US, "%d:%02d", minutes, seconds)
-    }
-}
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LibraryScreen(
@@ -139,37 +135,80 @@ fun LibraryScreen(
     onCreatePlaylist: (String) -> Unit,
     onRenamePlaylist: (String, String) -> Unit,
     onDeletePlaylist: (String) -> Unit,
-    onImportSpotify: (String, (Boolean) -> Unit) -> Unit,
-    onDismissError: () -> Unit,
-    onDismissMessage: () -> Unit,
+    onImportSpotify: (String, (Boolean) -> Unit) -> Unit = { _, _ -> },
+    onNavigateToImport: () -> Unit = {},
+    onDismissError: () -> Unit = {},
+    onDismissMessage: () -> Unit = {},
     onPlayTrack: (Track) -> Unit = {},
+    onPlayQueue: (List<Track>, Int) -> Unit = { _, _ -> },
     onTabSelected: (LibraryTab) -> Unit = {},
+    onFilterSelected: (LibraryFilter) -> Unit = {},
     onDeleteDownload: (String) -> Unit = {},
     onClearAllDownloads: () -> Unit = {},
     onPinDownload: (String) -> Unit = {},
     onUnpinDownload: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val clipboardManager = LocalClipboardManager.current
-    var showImportSheet by remember { mutableStateOf(false) }
     var showCreateDialog by remember { mutableStateOf(false) }
     var showClearAllDialog by remember { mutableStateOf(false) }
     var playlistToRename by remember { mutableStateOf<PlaylistSummary?>(null) }
     var playlistToDelete by remember { mutableStateOf<PlaylistSummary?>(null) }
+    var isSearchVisible by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
-    var downloadSortOrder by remember { mutableStateOf(DownloadSortOrder.RECENT) }
+    var currentSortOrder by remember { mutableStateOf(LibrarySortOrder.RECENTS) }
+    var showSortMenu by remember { mutableStateOf(false) }
 
-    val filteredPlaylists = remember(uiState.playlists, searchQuery) {
-        if (searchQuery.isBlank()) {
-            uiState.playlists
-        } else {
-            uiState.playlists.filter {
-                it.title.contains(searchQuery, ignoreCase = true)
-            }
+    val context = LocalContext.current
+    val userProfilePrefs = remember { UserProfilePreferences.getInstance(context) }
+    val userDisplayName by userProfilePrefs.displayNameFlow.collectAsState()
+    var showProfileDialog by remember { mutableStateOf(false) }
+
+    val profileInitial = remember(userDisplayName) {
+        userDisplayName.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "?"
+    }
+
+    // Separate Liked Songs from regular playlists
+    val likedSongsPlaylist = remember(uiState.playlists) {
+        uiState.playlists.find {
+            it.playlistId == PlaylistRepository.LIKED_SONGS_PLAYLIST_ID ||
+                it.title.equals("Liked Songs", ignoreCase = true)
         }
     }
 
-    val filteredDownloads = remember(uiState.downloadedTracks, searchQuery, downloadSortOrder) {
+    val regularPlaylists = remember(uiState.playlists) {
+        uiState.playlists.filterNot {
+            it.playlistId == PlaylistRepository.LIKED_SONGS_PLAYLIST_ID ||
+                it.title.equals("Liked Songs", ignoreCase = true)
+        }
+    }
+
+    val filteredPlaylists = remember(regularPlaylists, searchQuery, currentSortOrder) {
+        val base = if (searchQuery.isBlank()) {
+            regularPlaylists
+        } else {
+            regularPlaylists.filter { it.title.contains(searchQuery, ignoreCase = true) }
+        }
+        when (currentSortOrder) {
+            LibrarySortOrder.RECENTS -> base.sortedWith(compareByDescending<PlaylistSummary> { it.dateModifiedEpochMs }.thenBy { it.playlistId })
+            LibrarySortOrder.ALPHABETICAL -> base.sortedWith(compareBy<PlaylistSummary> { it.title.lowercase() }.thenBy { it.playlistId })
+            LibrarySortOrder.CREATOR -> base.sortedWith(compareBy<PlaylistSummary> { it.sourceUrl.orEmpty() }.thenBy { it.playlistId })
+        }
+    }
+
+    val filteredArtists = remember(uiState.followedArtists, searchQuery, currentSortOrder) {
+        val base = if (searchQuery.isBlank()) {
+            uiState.followedArtists
+        } else {
+            uiState.followedArtists.filter { it.name.contains(searchQuery, ignoreCase = true) }
+        }
+        when (currentSortOrder) {
+            LibrarySortOrder.RECENTS -> base
+            LibrarySortOrder.ALPHABETICAL -> base.sortedBy { it.name.lowercase() }
+            LibrarySortOrder.CREATOR -> base
+        }
+    }
+
+    val filteredDownloads = remember(uiState.downloadedTracks, searchQuery, currentSortOrder) {
         val base = if (searchQuery.isBlank()) {
             uiState.downloadedTracks
         } else {
@@ -179,10 +218,10 @@ fun LibraryScreen(
                     (it.album != null && it.album.contains(searchQuery, ignoreCase = true))
             }
         }
-        when (downloadSortOrder) {
-            DownloadSortOrder.RECENT -> base.sortedByDescending { it.downloadedAtEpochMs }
-            DownloadSortOrder.TITLE -> base.sortedBy { it.title.lowercase() }
-            DownloadSortOrder.SIZE -> base.sortedByDescending { it.fileSizeBytes }
+        when (currentSortOrder) {
+            LibrarySortOrder.RECENTS -> base.sortedWith(compareByDescending<DownloadedTrackItem> { it.downloadedAtEpochMs }.thenBy { it.downloadId })
+            LibrarySortOrder.ALPHABETICAL -> base.sortedWith(compareBy<DownloadedTrackItem> { it.title.lowercase() }.thenBy { it.downloadId })
+            LibrarySortOrder.CREATOR -> base.sortedWith(compareByDescending<DownloadedTrackItem> { it.fileSizeBytes }.thenBy { it.downloadId })
         }
     }
 
@@ -190,197 +229,120 @@ fun LibraryScreen(
         modifier = modifier
             .fillMaxSize()
             .background(DarkBackground)
-            .padding(horizontal = 20.dp)
             .testTag("library_screen_root")
     ) {
-        Spacer(modifier = Modifier.height(20.dp))
+        Spacer(modifier = Modifier.height(16.dp))
 
-        // Header: Title & Action buttons
+        // ── 1. Top Header: User avatar, "Your Library" title, Search & Plus & Import ──
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                // Profile Avatar Initial
+                Box(
+                    modifier = Modifier
+                        .size(34.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFFE07A5F))
+                        .clickable { showProfileDialog = true }
+                        .testTag("btn_profile_avatar"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = profileInitial,
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp
+                    )
+                }
+                Spacer(modifier = Modifier.width(12.dp))
                 Text(
                     text = "Your Library",
-                    style = MaterialTheme.typography.headlineLarge,
-                    color = TextPrimary,
+                    fontSize = 24.sp,
                     fontWeight = FontWeight.Bold,
+                    color = TextPrimary,
                     modifier = Modifier.testTag("library_title")
                 )
-                Text(
-                    text = if (uiState.selectedTab == LibraryTab.PLAYLISTS) {
-                        "${uiState.playlists.size} playlists"
-                    } else {
-                        "${uiState.downloadedTracks.size} downloaded tracks"
+            }
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                // Search Toggle Icon
+                IconButton(
+                    onClick = {
+                        isSearchVisible = !isSearchVisible
+                        if (!isSearchVisible) searchQuery = ""
                     },
-                    color = TextSecondary,
-                    fontSize = 12.sp,
-                    modifier = Modifier.testTag("library_playlist_count")
-                )
-            }
+                    modifier = Modifier.size(38.dp).testTag("btn_library_search")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Search,
+                        contentDescription = "Search",
+                        tint = if (isSearchVisible) EmeraldAccent else TextPrimary,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
 
-            if (uiState.selectedTab == LibraryTab.PLAYLISTS) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    // New Playlist Button
-                    IconButton(
-                        onClick = { showCreateDialog = true },
-                        modifier = Modifier
-                            .size(40.dp)
-                            .background(DarkSurfaceVariant, RoundedCornerShape(10.dp))
-                            .border(1.dp, DarkSurfaceBorder, RoundedCornerShape(10.dp))
-                            .testTag("btn_create_playlist")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Add,
-                            contentDescription = "Create Playlist",
-                            tint = EmeraldAccent,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
+                Spacer(modifier = Modifier.width(4.dp))
 
-                    // Import Spotify Playlist Button
-                    Button(
-                        onClick = { showImportSheet = true },
-                        colors = ButtonDefaults.buttonColors(containerColor = EmeraldAccent),
-                        shape = RoundedCornerShape(10.dp),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                        modifier = Modifier.testTag("btn_import_spotify")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.FileDownload,
-                            contentDescription = null,
-                            tint = Color.Black,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "Import",
-                            color = Color.Black,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
+                // Import Playlist Icon (Navigates to ImportPlaylistScreen)
+                IconButton(
+                    onClick = onNavigateToImport,
+                    modifier = Modifier.size(38.dp).testTag("btn_import_spotify")
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.Input,
+                        contentDescription = "Import Playlist",
+                        tint = TextPrimary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(4.dp))
+
+                // Create Playlist Button (Opens Create Dialog)
+                IconButton(
+                    onClick = { showCreateDialog = true },
+                    modifier = Modifier.size(38.dp).testTag("btn_create_playlist")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = "Create Playlist",
+                        tint = TextPrimary,
+                        modifier = Modifier.size(24.dp)
+                    )
                 }
             }
         }
 
-        Spacer(modifier = Modifier.height(12.dp))
-
-        // Segmented Tabs: Playlists vs Downloads
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        // Search Bar (Shown when search is toggled)
+        AnimatedVisibility(
+            visible = isSearchVisible,
+            enter = fadeIn(),
+            exit = fadeOut()
         ) {
-            val isPlaylists = uiState.selectedTab == LibraryTab.PLAYLISTS
-            Surface(
-                onClick = { onTabSelected(LibraryTab.PLAYLISTS) },
-                color = if (isPlaylists) EmeraldAccent.copy(alpha = 0.2f) else DarkSurface,
-                shape = RoundedCornerShape(20.dp),
-                border = androidx.compose.foundation.BorderStroke(
-                    1.dp,
-                    if (isPlaylists) EmeraldAccent else DarkSurfaceBorder
-                ),
-                modifier = Modifier.testTag("library_tab_playlists")
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.LibraryMusic,
-                        contentDescription = null,
-                        tint = if (isPlaylists) EmeraldAccent else TextSecondary,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Text(
-                        text = "Playlists (${uiState.playlists.size})",
-                        color = if (isPlaylists) EmeraldAccent else TextSecondary,
-                        fontSize = 13.sp,
-                        fontWeight = if (isPlaylists) FontWeight.Bold else FontWeight.Medium
-                    )
-                }
-            }
-
-            val isDownloads = uiState.selectedTab == LibraryTab.DOWNLOADS
-            Surface(
-                onClick = { onTabSelected(LibraryTab.DOWNLOADS) },
-                color = if (isDownloads) EmeraldAccent.copy(alpha = 0.2f) else DarkSurface,
-                shape = RoundedCornerShape(20.dp),
-                border = androidx.compose.foundation.BorderStroke(
-                    1.dp,
-                    if (isDownloads) EmeraldAccent else DarkSurfaceBorder
-                ),
-                modifier = Modifier.testTag("library_tab_downloads")
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.FileDownload,
-                        contentDescription = null,
-                        tint = if (isDownloads) EmeraldAccent else TextSecondary,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Text(
-                        text = "Downloads (${uiState.downloadedTracks.size})",
-                        color = if (isDownloads) EmeraldAccent else TextSecondary,
-                        fontSize = 13.sp,
-                        fontWeight = if (isDownloads) FontWeight.Bold else FontWeight.Medium
-                    )
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        // Search Field (active for both tabs when items exist)
-        val showSearch = if (uiState.selectedTab == LibraryTab.PLAYLISTS) {
-            uiState.playlists.isNotEmpty()
-        } else {
-            uiState.downloadedTracks.isNotEmpty()
-        }
-
-        if (showSearch) {
             OutlinedTextField(
                 value = searchQuery,
                 onValueChange = { searchQuery = it },
-                placeholder = {
-                    Text(
-                        if (uiState.selectedTab == LibraryTab.PLAYLISTS) "Find in playlists..." else "Find in downloads...",
-                        color = TextSecondary,
-                        fontSize = 13.sp
-                    )
-                },
+                placeholder = { Text("Search your library...", color = TextSecondary, fontSize = 13.sp) },
+                singleLine = true,
                 leadingIcon = {
-                    Icon(
-                        imageVector = Icons.Default.Search,
-                        contentDescription = null,
-                        tint = TextSecondary,
-                        modifier = Modifier.size(18.dp)
-                    )
+                    Icon(Icons.Default.Search, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(18.dp))
                 },
                 trailingIcon = {
                     if (searchQuery.isNotEmpty()) {
                         IconButton(onClick = { searchQuery = "" }) {
-                            Icon(
-                                imageVector = Icons.Default.Close,
-                                contentDescription = "Clear search",
-                                tint = TextSecondary,
-                                modifier = Modifier.size(16.dp)
-                            )
+                            Icon(Icons.Default.Clear, contentDescription = "Clear", tint = TextSecondary, modifier = Modifier.size(16.dp))
                         }
                     }
                 },
-                singleLine = true,
                 shape = RoundedCornerShape(10.dp),
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedContainerColor = DarkSurface,
-                    unfocusedContainerColor = DarkSurface,
+                    focusedContainerColor = DarkSurfaceVariant,
+                    unfocusedContainerColor = DarkSurfaceVariant,
                     focusedBorderColor = EmeraldAccent,
                     unfocusedBorderColor = DarkSurfaceBorder,
                     focusedTextColor = TextPrimary,
@@ -388,237 +350,277 @@ fun LibraryScreen(
                 ),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .testTag("library_filter_field")
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                    .testTag("library_search_field")
             )
-            Spacer(modifier = Modifier.height(12.dp))
         }
 
-        // Active Error / Action Messages
-        uiState.importError?.let { msg ->
-            ErrorCard(message = msg, onDismiss = onDismissError)
-            Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // ── 2. Filter Chips: Playlists | Artists | Downloads ────────────────────────
+        LazyRow(
+            modifier = Modifier.fillMaxWidth(),
+            contentPadding = PaddingValues(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            item {
+                LibraryChip(
+                    label = "Playlists",
+                    isSelected = uiState.selectedFilter == LibraryFilter.PLAYLISTS,
+                    onClick = { onFilterSelected(LibraryFilter.PLAYLISTS) }
+                )
+            }
+            item {
+                LibraryChip(
+                    label = "Artists",
+                    isSelected = uiState.selectedFilter == LibraryFilter.ARTISTS,
+                    onClick = { onFilterSelected(LibraryFilter.ARTISTS) }
+                )
+            }
+            item {
+                LibraryChip(
+                    label = "Downloads",
+                    isSelected = uiState.selectedFilter == LibraryFilter.DOWNLOADS,
+                    onClick = { onFilterSelected(LibraryFilter.DOWNLOADS) }
+                )
+            }
         }
 
-        uiState.actionMessage?.let { msg ->
-            Surface(
-                color = DarkSurfaceElevated,
-                shape = RoundedCornerShape(10.dp),
-                border = androidx.compose.foundation.BorderStroke(1.dp, EmeraldAccent.copy(alpha = 0.5f)),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onDismissMessage() }
-            ) {
+        Spacer(modifier = Modifier.height(10.dp))
+
+        // ── 3. Sort Row: "⇅ Recents" ──────────────────────────────────────────────
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box {
                 Row(
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                    modifier = Modifier
+                        .clickable { showSortMenu = true }
+                        .padding(vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = msg,
-                        color = EmeraldAccent,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium,
-                        modifier = Modifier.weight(1f)
+                    Icon(
+                        imageVector = Icons.Default.SwapVert,
+                        contentDescription = "Sort",
+                        tint = TextSecondary,
+                        modifier = Modifier.size(18.dp)
                     )
-                    IconButton(onClick = onDismissMessage, modifier = Modifier.size(18.dp)) {
-                        Icon(Icons.Default.Close, contentDescription = "Dismiss", tint = TextSecondary, modifier = Modifier.size(14.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = currentSortOrder.displayName,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = TextSecondary
+                    )
+                }
+
+                DropdownMenu(
+                    expanded = showSortMenu,
+                    onDismissRequest = { showSortMenu = false },
+                    modifier = Modifier.background(DarkSurfaceVariant)
+                ) {
+                    LibrarySortOrder.entries.forEach { sort ->
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    text = sort.displayName,
+                                    color = if (sort == currentSortOrder) EmeraldAccent else TextPrimary,
+                                    fontWeight = if (sort == currentSortOrder) FontWeight.Bold else FontWeight.Normal
+                                )
+                            },
+                            onClick = {
+                                currentSortOrder = sort
+                                showSortMenu = false
+                            }
+                        )
                     }
                 }
             }
-            Spacer(modifier = Modifier.height(10.dp))
-        }
 
-        // Content: Loading / Playlists Grid / Downloads Section
-        when (uiState.selectedTab) {
-            LibraryTab.PLAYLISTS -> {
-                when {
-                    uiState.isLoading -> {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .weight(1f),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            CircularProgressIndicator(color = EmeraldAccent, modifier = Modifier.size(36.dp))
-                        }
-                    }
-                    uiState.playlists.isEmpty() -> {
-                        EmptyState(
-                            icon = Icons.Default.LibraryMusic,
-                            title = "Your Library is Empty",
-                            description = "Import your favorite Spotify playlists or create custom playlists to start listening.",
-                            actionLabel = "Import Spotify Playlist",
-                            onActionClick = { showImportSheet = true }
+            if (uiState.selectedFilter == LibraryFilter.DOWNLOADS && uiState.downloadedTracks.isNotEmpty()) {
+                val domainTracks = remember(filteredDownloads) {
+                    filteredDownloads.map { dl ->
+                        Track(
+                            id = TrackId.spotify(dl.trackId),
+                            title = dl.title,
+                            artist = dl.artist,
+                            album = dl.album,
+                            durationMs = dl.durationMs,
+                            artworkUri = dl.artworkUri,
+                            source = AudioSource.Local(dl.contentUriString)
                         )
                     }
-                    filteredPlaylists.isEmpty() -> {
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Surface(
+                        onClick = { onPlayQueue(domainTracks, 0) },
+                        shape = RoundedCornerShape(16.dp),
+                        color = EmeraldAccent,
+                        modifier = Modifier.height(28.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(Icons.Default.PlayArrow, contentDescription = "Play", tint = Color.Black, modifier = Modifier.size(14.dp))
+                            Text("Play", color = Color.Black, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                    Surface(
+                        onClick = { onPlayQueue(domainTracks.shuffled(), 0) },
+                        shape = RoundedCornerShape(16.dp),
+                        color = DarkSurfaceVariant,
+                        border = BorderStroke(1.dp, DarkSurfaceBorder),
+                        modifier = Modifier.height(28.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(Icons.Default.Shuffle, contentDescription = "Shuffle", tint = TextPrimary, modifier = Modifier.size(14.dp))
+                        }
+                    }
+                    TextButton(
+                        onClick = { showClearAllDialog = true },
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.DeleteSweep,
+                            contentDescription = "Clear all",
+                            tint = ErrorRed,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(modifier = Modifier.width(2.dp))
+                        Text(text = "Clear All", color = ErrorRed, fontSize = 11.sp)
+                    }
+                }
+            }
+        }
+
+        // ── 4. Main Body: Spotify-Style Vertical List ─────────────────────────────
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 120.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            // Case A: Filter = DOWNLOADS
+            if (uiState.selectedFilter == LibraryFilter.DOWNLOADS) {
+                if (filteredDownloads.isEmpty()) {
+                    item {
+                        EmptyState(
+                            icon = Icons.Default.FileDownload,
+                            title = if (searchQuery.isBlank()) "No Offline Downloads" else "No Downloads Found",
+                            description = if (searchQuery.isBlank()) "Songs you download or listen to for more than 30 seconds are saved here." else "No offline tracks match \"$searchQuery\"."
+                        )
+                    }
+                } else {
+                    itemsIndexed(filteredDownloads, key = { _, item -> item.downloadId }) { index, item ->
+                        val isCurrentlyPlaying = playbackState.currentTrack?.id?.rawId == item.trackId
+                        val isPlaying = isCurrentlyPlaying && playbackState.isPlaying
+
+                        DownloadedTrackRow(
+                            position = index + 1,
+                            item = item,
+                            isCurrentlyPlaying = isCurrentlyPlaying,
+                            isPlaying = isPlaying,
+                            onClick = {
+                                val domainTracks = filteredDownloads.map { dl ->
+                                    Track(
+                                        id = TrackId.spotify(dl.trackId),
+                                        title = dl.title,
+                                        artist = dl.artist,
+                                        album = dl.album,
+                                        durationMs = dl.durationMs,
+                                        artworkUri = dl.artworkUri,
+                                        source = AudioSource.Local(dl.contentUriString)
+                                    )
+                                }
+                                onPlayQueue(domainTracks, index)
+                            },
+                            onPin = { onPinDownload(item.downloadId) },
+                            onUnpin = { onUnpinDownload(item.downloadId) },
+                            onDelete = { onDeleteDownload(item.downloadId) }
+                        )
+                    }
+                }
+            }
+            // Case B: Filter = ARTISTS
+            else if (uiState.selectedFilter == LibraryFilter.ARTISTS) {
+                if (filteredArtists.isEmpty()) {
+                    item {
+                        EmptyState(
+                            icon = Icons.Default.Person,
+                            title = if (searchQuery.isBlank()) "No artists yet" else "No Artists Found",
+                            description = if (searchQuery.isBlank()) "Artists you follow on the Home screen will appear here." else "No followed artists match \"$searchQuery\"."
+                        )
+                    }
+                } else {
+                    items(filteredArtists, key = { it.id }) { artist ->
+                        ArtistListRow(artist = artist)
+                    }
+                }
+            }
+            // Case C: Filter = ALL or PLAYLISTS
+            else {
+                // 1. Pinned "Liked Songs" Row (always pinned at the top)
+                item(key = "pinned_liked_songs") {
+                    LikedSongsPinnedRow(
+                        trackCount = likedSongsPlaylist?.trackCount ?: 0,
+                        onClick = {
+                            val targetId = likedSongsPlaylist?.playlistId ?: PlaylistRepository.LIKED_SONGS_PLAYLIST_ID
+                            onPlaylistClick(targetId)
+                        }
+                    )
+                }
+
+                // 2. Playlists List
+                if (filteredPlaylists.isEmpty() && searchQuery.isNotBlank()) {
+                    item {
                         EmptyState(
                             icon = Icons.Default.Search,
                             title = "No Playlists Found",
-                            description = "No playlists in your library match \"$searchQuery\"."
+                            description = "No playlists match \"$searchQuery\"."
                         )
                     }
-                    else -> {
-                        LazyVerticalGrid(
-                            columns = GridCells.Fixed(2),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(14.dp),
-                            contentPadding = PaddingValues(bottom = 96.dp),
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .testTag("library_playlist_grid")
-                        ) {
-                            items(filteredPlaylists, key = { it.playlistId }) { playlist ->
-                                PlaylistCard(
-                                    playlist = playlist,
-                                    onClick = { onPlaylistClick(playlist.playlistId) },
-                                    onRename = { playlistToRename = playlist },
-                                    onDelete = { playlistToDelete = playlist }
-                                )
-                            }
-                        }
+                } else {
+                    items(filteredPlaylists, key = { it.playlistId }) { playlist ->
+                        PlaylistListRow(
+                            playlist = playlist,
+                            onClick = { onPlaylistClick(playlist.playlistId) },
+                            onRename = { playlistToRename = playlist },
+                            onDelete = { playlistToDelete = playlist }
+                        )
                     }
                 }
-            }
-            LibraryTab.DOWNLOADS -> {
-                DownloadsContent(
-                    storageStats = uiState.storageStats,
-                    downloadedTracks = filteredDownloads,
-                    totalDownloadedCount = uiState.downloadedTracks.size,
-                    searchQuery = searchQuery,
-                    sortOrder = downloadSortOrder,
-                    onSortOrderChange = { downloadSortOrder = it },
-                    onClearAllClick = { showClearAllDialog = true },
-                    onTrackClick = { item ->
-                        val track = Track(
-                            id = TrackId.spotify(item.trackId),
-                            title = item.title,
-                            artist = item.artist,
-                            album = item.album,
-                            durationMs = item.durationMs,
-                            artworkUri = item.artworkUri,
-                            source = AudioSource.Local(item.contentUriString)
-                        )
-                        onPlayTrack(track)
-                    },
-                    onPinDownload = onPinDownload,
-                    onUnpinDownload = onUnpinDownload,
-                    onDeleteDownload = onDeleteDownload,
-                    playbackState = playbackState
-                )
+
+                // 3. Artists (when in ALL filter mode, display followed artists under playlists)
+                if (uiState.selectedFilter == LibraryFilter.ALL && filteredArtists.isNotEmpty()) {
+                    items(filteredArtists, key = { "artist_${it.id}" }) { artist ->
+                        ArtistListRow(artist = artist)
+                    }
+                }
             }
         }
     }
 
-    // Modal: Standalone Import Spotify Playlist BottomSheet
-    if (showImportSheet) {
-        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-        var inputUrl by remember { mutableStateOf("") }
-
-        ModalBottomSheet(
-            onDismissRequest = { if (!uiState.isImporting) showImportSheet = false },
-            sheetState = sheetState,
-            containerColor = DarkSurface,
-            contentColor = TextPrimary
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 24.dp, vertical = 16.dp)
-                    .testTag("import_playlist_bottom_sheet")
-            ) {
-                Text(
-                    text = "Import Spotify Playlist",
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = TextPrimary
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "Paste any public Spotify playlist URL or share link (e.g. open.spotify.com/playlist/...)",
-                    fontSize = 12.sp,
-                    color = TextSecondary,
-                    lineHeight = 16.sp
-                )
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                OutlinedTextField(
-                    value = inputUrl,
-                    onValueChange = { inputUrl = it },
-                    placeholder = { Text("https://open.spotify.com/playlist/...", color = TextSecondary, fontSize = 13.sp) },
-                    singleLine = true,
-                    enabled = !uiState.isImporting,
-                    trailingIcon = {
-                        IconButton(onClick = {
-                            val clipText = clipboardManager.getText()?.text
-                            if (!clipText.isNullOrBlank()) {
-                                inputUrl = clipText.trim()
-                            }
-                        }) {
-                            Icon(Icons.Default.ContentPaste, contentDescription = "Paste", tint = EmeraldAccent, modifier = Modifier.size(18.dp))
-                        }
-                    },
-                    shape = RoundedCornerShape(10.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = DarkSurfaceVariant,
-                        unfocusedContainerColor = DarkSurfaceVariant,
-                        focusedBorderColor = EmeraldAccent,
-                        unfocusedBorderColor = DarkSurfaceBorder,
-                        focusedTextColor = TextPrimary,
-                        unfocusedTextColor = TextPrimary
-                    ),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("import_spotify_url_field")
-                )
-
-                if (uiState.importError != null) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = uiState.importError ?: "",
-                        color = ErrorRed,
-                        fontSize = 12.sp
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(20.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
-                ) {
-                    TextButton(
-                        onClick = { showImportSheet = false },
-                        enabled = !uiState.isImporting
-                    ) {
-                        Text("Cancel", color = TextSecondary)
-                    }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Button(
-                        onClick = {
-                            onImportSpotify(inputUrl) { success ->
-                                if (success) {
-                                    showImportSheet = false
-                                }
-                            }
-                        },
-                        enabled = inputUrl.isNotBlank() && !uiState.isImporting,
-                        colors = ButtonDefaults.buttonColors(containerColor = EmeraldAccent),
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier.testTag("btn_confirm_import")
-                    ) {
-                        if (uiState.isImporting) {
-                            CircularProgressIndicator(color = Color.Black, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Importing...", color = Color.Black, fontWeight = FontWeight.Bold)
-                        } else {
-                            Text("Import Playlist", color = Color.Black, fontWeight = FontWeight.Bold)
-                        }
-                    }
-                }
-                Spacer(modifier = Modifier.height(24.dp))
+    // Dialog: Profile Settings
+    if (showProfileDialog) {
+        ProfileSettingsDialog(
+            initialName = userDisplayName,
+            onDismiss = { showProfileDialog = false },
+            onSave = { newName ->
+                userProfilePrefs.updateDisplayName(newName)
             }
-        }
+        )
     }
 
     // Dialog: Create Playlist
@@ -649,15 +651,15 @@ fun LibraryScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        if (newTitle.isNotBlank()) {
-                            onCreatePlaylist(newTitle)
+                        val trimmed = newTitle.trim()
+                        if (trimmed.isNotBlank()) {
+                            onCreatePlaylist(trimmed)
                             showCreateDialog = false
                         }
                     },
                     enabled = newTitle.isNotBlank(),
                     colors = ButtonDefaults.buttonColors(containerColor = EmeraldAccent),
-                    shape = RoundedCornerShape(8.dp),
-                    modifier = Modifier.testTag("btn_confirm_create_playlist")
+                    modifier = Modifier.testTag("create_playlist_confirm_button")
                 ) {
                     Text("Create", color = Color.Black, fontWeight = FontWeight.Bold)
                 }
@@ -668,7 +670,7 @@ fun LibraryScreen(
                 }
             },
             containerColor = DarkSurface,
-            shape = RoundedCornerShape(14.dp)
+            shape = RoundedCornerShape(16.dp)
         )
     }
 
@@ -682,7 +684,6 @@ fun LibraryScreen(
                 OutlinedTextField(
                     value = updatedTitle,
                     onValueChange = { updatedTitle = it },
-                    placeholder = { Text("Playlist title", color = TextSecondary) },
                     singleLine = true,
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedContainerColor = DarkSurfaceVariant,
@@ -692,23 +693,20 @@ fun LibraryScreen(
                         focusedTextColor = TextPrimary,
                         unfocusedTextColor = TextPrimary
                     ),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("rename_playlist_title_field")
+                    modifier = Modifier.fillMaxWidth()
                 )
             },
             confirmButton = {
                 Button(
                     onClick = {
-                        if (updatedTitle.isNotBlank()) {
-                            onRenamePlaylist(pl.playlistId, updatedTitle)
+                        val trimmed = updatedTitle.trim()
+                        if (trimmed.isNotBlank()) {
+                            onRenamePlaylist(pl.playlistId, trimmed)
                             playlistToRename = null
                         }
                     },
                     enabled = updatedTitle.isNotBlank(),
-                    colors = ButtonDefaults.buttonColors(containerColor = EmeraldAccent),
-                    shape = RoundedCornerShape(8.dp),
-                    modifier = Modifier.testTag("btn_confirm_rename_playlist")
+                    colors = ButtonDefaults.buttonColors(containerColor = EmeraldAccent)
                 ) {
                     Text("Save", color = Color.Black, fontWeight = FontWeight.Bold)
                 }
@@ -719,20 +717,20 @@ fun LibraryScreen(
                 }
             },
             containerColor = DarkSurface,
-            shape = RoundedCornerShape(14.dp)
+            shape = RoundedCornerShape(16.dp)
         )
     }
 
-    // Dialog: Delete Confirmation
+    // Dialog: Delete Playlist
     playlistToDelete?.let { pl ->
         AlertDialog(
             onDismissRequest = { playlistToDelete = null },
             title = { Text("Delete Playlist", color = TextPrimary, fontWeight = FontWeight.Bold) },
             text = {
                 Text(
-                    text = "Are you sure you want to delete \"${pl.title}\"? This action cannot be undone.",
+                    text = "Are you sure you want to delete '${pl.title}'?",
                     color = TextSecondary,
-                    fontSize = 13.sp
+                    fontSize = 14.sp
                 )
             },
             confirmButton = {
@@ -741,9 +739,7 @@ fun LibraryScreen(
                         onDeletePlaylist(pl.playlistId)
                         playlistToDelete = null
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = ErrorRed),
-                    shape = RoundedCornerShape(8.dp),
-                    modifier = Modifier.testTag("btn_confirm_delete_playlist")
+                    colors = ButtonDefaults.buttonColors(containerColor = ErrorRed)
                 ) {
                     Text("Delete", color = Color.White, fontWeight = FontWeight.Bold)
                 }
@@ -754,20 +750,20 @@ fun LibraryScreen(
                 }
             },
             containerColor = DarkSurface,
-            shape = RoundedCornerShape(14.dp)
+            shape = RoundedCornerShape(16.dp)
         )
     }
 
-    // Dialog: Clear All Downloads Confirmation
+    // Dialog: Clear All Downloads
     if (showClearAllDialog) {
         AlertDialog(
             onDismissRequest = { showClearAllDialog = false },
             title = { Text("Clear All Downloads", color = TextPrimary, fontWeight = FontWeight.Bold) },
             text = {
                 Text(
-                    text = "Are you sure you want to delete all ${uiState.downloadedTracks.size} offline tracks? This will free ${formatBytes(uiState.storageStats.totalSizeBytes)} of storage on this device.",
+                    text = "Are you sure you want to delete all offline tracks? This will free device storage.",
                     color = TextSecondary,
-                    fontSize = 13.sp
+                    fontSize = 14.sp
                 )
             },
             confirmButton = {
@@ -776,11 +772,9 @@ fun LibraryScreen(
                         onClearAllDownloads()
                         showClearAllDialog = false
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = ErrorRed),
-                    shape = RoundedCornerShape(8.dp),
-                    modifier = Modifier.testTag("btn_confirm_clear_all_downloads")
+                    colors = ButtonDefaults.buttonColors(containerColor = ErrorRed)
                 ) {
-                    Text("Clear All", color = Color.White, fontWeight = FontWeight.Bold)
+                    Text("Delete All", color = Color.White, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
@@ -789,252 +783,312 @@ fun LibraryScreen(
                 }
             },
             containerColor = DarkSurface,
-            shape = RoundedCornerShape(14.dp)
+            shape = RoundedCornerShape(16.dp)
         )
     }
 }
 
+// ── Components: Filter Chip ──────────────────────────────────────────────────
 @Composable
-private fun DownloadsContent(
-    storageStats: StorageStats,
-    downloadedTracks: List<DownloadedTrackItem>,
-    totalDownloadedCount: Int,
-    searchQuery: String,
-    sortOrder: DownloadSortOrder,
-    onSortOrderChange: (DownloadSortOrder) -> Unit,
-    onClearAllClick: () -> Unit,
-    onTrackClick: (DownloadedTrackItem) -> Unit,
-    onPinDownload: (String) -> Unit,
-    onUnpinDownload: (String) -> Unit,
-    onDeleteDownload: (String) -> Unit,
-    playbackState: PlaybackUiState
+private fun LibraryChip(
+    label: String,
+    isSelected: Boolean,
+    onClick: () -> Unit
 ) {
-    LazyColumn(
+    FilterChip(
+        selected = isSelected,
+        onClick = onClick,
+        label = {
+            Text(
+                text = label,
+                fontSize = 13.sp,
+                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+            )
+        },
+        shape = RoundedCornerShape(20.dp),
+        colors = FilterChipDefaults.filterChipColors(
+            selectedContainerColor = EmeraldAccent,
+            selectedLabelColor = Color.Black,
+            containerColor = Color(0xFF282828),
+            labelColor = TextPrimary
+        ),
+        border = null
+    )
+}
+
+// ── Components: Pinned Liked Songs Row ───────────────────────────────────────
+@Composable
+private fun LikedSongsPinnedRow(
+    trackCount: Int,
+    onClick: () -> Unit
+) {
+    Row(
         modifier = Modifier
-            .fillMaxSize()
-            .testTag("downloads_list"),
-        contentPadding = PaddingValues(bottom = 96.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp)
+            .testTag("playlist_card_liked_songs"),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        // Storage Breakdown Card
-        item {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = DarkSurface),
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .border(1.dp, DarkSurfaceBorder, RoundedCornerShape(12.dp))
-                    .testTag("downloads_storage_card")
-            ) {
-                Column(modifier = Modifier.padding(14.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Storage,
-                                contentDescription = null,
-                                tint = EmeraldAccent,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Text(
-                                text = "Offline Storage",
-                                color = TextPrimary,
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-
-                        if (totalDownloadedCount > 0) {
-                            TextButton(
-                                onClick = onClearAllClick,
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                                modifier = Modifier.testTag("btn_clear_all_downloads")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.DeleteSweep,
-                                    contentDescription = null,
-                                    tint = ErrorRed,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    text = "Clear All",
-                                    color = ErrorRed,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.Bottom
-                    ) {
-                        Column {
-                            Text(
-                                text = formatBytes(storageStats.totalSizeBytes),
-                                color = TextPrimary,
-                                fontSize = 22.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = "$totalDownloadedCount tracks • ${formatBytes(storageStats.freeSpaceBytes)} free on device",
-                                color = TextSecondary,
-                                fontSize = 11.sp
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Surface(
-                            color = DarkSurfaceVariant,
-                            shape = RoundedCornerShape(6.dp),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(8.dp)
-                                        .background(EmeraldAccent, RoundedCornerShape(2.dp))
-                                )
-                                Text(
-                                    text = "Pinned: ${formatBytes(storageStats.pinnedSizeBytes)}",
-                                    color = TextSecondary,
-                                    fontSize = 11.sp,
-                                    maxLines = 1
-                                )
-                            }
-                        }
-
-                        Surface(
-                            color = DarkSurfaceVariant,
-                            shape = RoundedCornerShape(6.dp),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(8.dp)
-                                        .background(Color(0xFF00E5FF), RoundedCornerShape(2.dp))
-                                )
-                                Text(
-                                    text = "Smart: ${formatBytes(storageStats.smartSizeBytes)}",
-                                    color = TextSecondary,
-                                    fontSize = 11.sp,
-                                    maxLines = 1
-                                )
-                            }
-                        }
-                    }
-                }
-            }
+        // 64dp Purple Gradient Tile with White Heart
+        Box(
+            modifier = Modifier
+                .size(64.dp)
+                .clip(RoundedCornerShape(6.dp))
+                .background(
+                    Brush.linearGradient(
+                        colors = listOf(
+                            Color(0xFF450AF5),
+                            Color(0xFF8E8EE5),
+                            Color(0xFFC4B5FD)
+                        )
+                    )
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Default.Favorite,
+                contentDescription = "Liked Songs",
+                tint = Color.White,
+                modifier = Modifier.size(28.dp)
+            )
         }
 
-        // Sort Row (only if we have downloads)
-        if (totalDownloadedCount > 0) {
-            item {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Sort:",
-                        color = TextSecondary,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                    DownloadSortOrder.values().forEach { order ->
-                        val isSelected = sortOrder == order
-                        Surface(
-                            onClick = { onSortOrderChange(order) },
-                            color = if (isSelected) EmeraldAccent.copy(alpha = 0.2f) else DarkSurface,
-                            shape = RoundedCornerShape(16.dp),
-                            border = androidx.compose.foundation.BorderStroke(
-                                1.dp,
-                                if (isSelected) EmeraldAccent else DarkSurfaceBorder
-                            ),
-                            modifier = Modifier.testTag("sort_chip_${order.name.lowercase()}")
-                        ) {
-                            Text(
-                                text = order.displayName,
-                                color = if (isSelected) EmeraldAccent else TextSecondary,
-                                fontSize = 11.sp,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                            )
-                        }
-                    }
-                }
-            }
-        }
+        Spacer(modifier = Modifier.width(12.dp))
 
-        // Empty States or Downloaded Track Rows
-        when {
-            totalDownloadedCount == 0 -> {
-                item {
-                    EmptyState(
-                        icon = Icons.Default.FileDownload,
-                        title = "No Offline Downloads",
-                        description = "Songs you download or listen to for more than 30 seconds are saved here for seamless offline playback."
-                    )
-                }
-            }
-            downloadedTracks.isEmpty() -> {
-                item {
-                    EmptyState(
-                        icon = Icons.Default.Search,
-                        title = "No Downloads Found",
-                        description = "No offline tracks match \"$searchQuery\"."
-                    )
-                }
-            }
-            else -> {
-                itemsIndexed(downloadedTracks, key = { _, item -> item.downloadId }) { index, item ->
-                    val isCurrentlyPlaying = playbackState.currentTrack?.id?.rawId == item.trackId
-                    val isPlaying = isCurrentlyPlaying && playbackState.isPlaying
-
-                    DownloadedTrackRow(
-                        position = index + 1,
-                        item = item,
-                        isCurrentlyPlaying = isCurrentlyPlaying,
-                        isPlaying = isPlaying,
-                        onClick = { onTrackClick(item) },
-                        onPin = { onPinDownload(item.downloadId) },
-                        onUnpin = { onUnpinDownload(item.downloadId) },
-                        onDelete = { onDeleteDownload(item.downloadId) }
-                    )
-                }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "Liked Songs",
+                color = TextPrimary,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Default.PushPin,
+                    contentDescription = "Pinned",
+                    tint = EmeraldAccent,
+                    modifier = Modifier.size(13.dp)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    text = "Playlist • $trackCount songs",
+                    color = TextSecondary,
+                    fontSize = 13.sp
+                )
             }
         }
     }
 }
 
+// ── Components: Playlist Row (Spotify Style) ─────────────────────────────────
+@Composable
+private fun PlaylistListRow(
+    playlist: PlaylistSummary,
+    onClick: () -> Unit,
+    onRename: () -> Unit,
+    onDelete: () -> Unit
+) {
+    var showMenu by remember { mutableStateOf(false) }
+
+    val isYouTube = playlist.playlistId.startsWith("pl_youtube_") ||
+        playlist.sourceUrl?.contains("youtube", ignoreCase = true) == true
+    val isSpotify = playlist.playlistId.startsWith("pl_spotify_") ||
+        playlist.sourceUrl?.contains("spotify", ignoreCase = true) == true
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp)
+            .testTag("playlist_card_${playlist.playlistId}"),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // 64dp Cover Art
+        PlaylistArtwork(
+            artworkUri = playlist.artworkUri,
+            firstTrackArtworkUrl = playlist.firstTrackArtworkUrl,
+            modifier = Modifier
+                .size(64.dp)
+                .clip(RoundedCornerShape(6.dp)),
+            targetSizePx = 256
+        )
+
+        Spacer(modifier = Modifier.width(12.dp))
+
+        // Title & Subtitle
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = playlist.title,
+                color = TextPrimary,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                val subtitle = if (playlist.trackCount == 1) "Playlist • 1 song" else "Playlist • ${playlist.trackCount} songs"
+                Text(
+                    text = subtitle,
+                    color = TextSecondary,
+                    fontSize = 13.sp
+                )
+
+                if (isYouTube) {
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Surface(
+                        color = Color(0xFFFF0000).copy(alpha = 0.15f),
+                        shape = RoundedCornerShape(4.dp)
+                    ) {
+                        Text(
+                            text = "YouTube",
+                            color = Color(0xFFFF4D4D),
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                        )
+                    }
+                } else if (isSpotify) {
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Surface(
+                        color = EmeraldAccent.copy(alpha = 0.15f),
+                        shape = RoundedCornerShape(4.dp)
+                    ) {
+                        Text(
+                            text = "Spotify",
+                            color = EmeraldAccent,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+            }
+        }
+
+        // More Options Dropdown
+        Box {
+            IconButton(
+                onClick = { showMenu = true },
+                modifier = Modifier
+                    .size(32.dp)
+                    .testTag("playlist_menu_${playlist.playlistId}")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.MoreVert,
+                    contentDescription = "Options",
+                    tint = TextSecondary,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+
+            DropdownMenu(
+                expanded = showMenu,
+                onDismissRequest = { showMenu = false },
+                modifier = Modifier.background(DarkSurfaceVariant)
+            ) {
+                DropdownMenuItem(
+                    text = { Text("Rename", color = TextPrimary, fontSize = 13.sp) },
+                    leadingIcon = {
+                        Icon(Icons.Default.Edit, contentDescription = null, tint = EmeraldAccent, modifier = Modifier.size(16.dp))
+                    },
+                    onClick = {
+                        showMenu = false
+                        onRename()
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text("Delete", color = ErrorRed, fontSize = 13.sp) },
+                    leadingIcon = {
+                        Icon(Icons.Default.Delete, contentDescription = null, tint = ErrorRed, modifier = Modifier.size(16.dp))
+                    },
+                    onClick = {
+                        showMenu = false
+                        onDelete()
+                    }
+                )
+            }
+        }
+    }
+}
+
+// ── Components: Artist Row (Spotify Style) ───────────────────────────────────
+@Composable
+private fun ArtistListRow(
+    artist: FollowedArtist,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // 64dp Circular Avatar
+        val highResArtistUrl = com.notify.core.playback.ArtworkResolution.highResArtwork(artist.imageUrl, 256)
+        SubcomposeAsyncImage(
+            model = highResArtistUrl ?: artist.imageUrl,
+            contentDescription = artist.name,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .size(64.dp)
+                .clip(CircleShape)
+                .background(DarkSurfaceVariant),
+            loading = {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator(
+                        color = EmeraldAccent,
+                        modifier = Modifier.size(18.dp),
+                        strokeWidth = 2.dp
+                    )
+                }
+            },
+            error = {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color(0xFF2E2E2E)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Person,
+                        contentDescription = null,
+                        tint = TextSecondary,
+                        modifier = Modifier.size(28.dp)
+                    )
+                }
+            }
+        )
+
+        Spacer(modifier = Modifier.width(12.dp))
+
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = artist.name,
+                color = TextPrimary,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "Artist",
+                color = TextSecondary,
+                fontSize = 13.sp
+            )
+        }
+    }
+}
+
+// ── Components: Downloaded Track Row ─────────────────────────────────────────
 @Composable
 private fun DownloadedTrackRow(
     position: Int,
@@ -1048,153 +1102,100 @@ private fun DownloadedTrackRow(
 ) {
     val isPinned = item.bucket == DownloadBucket.PINNED
 
-    Card(
-        onClick = onClick,
-        colors = CardDefaults.cardColors(
-            containerColor = if (isCurrentlyPlaying) DarkSurfaceVariant else DarkSurface
-        ),
-        shape = RoundedCornerShape(10.dp),
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .border(
-                1.dp,
-                if (isCurrentlyPlaying) EmeraldAccent.copy(alpha = 0.5f) else DarkSurfaceBorder,
-                RoundedCornerShape(10.dp)
-            )
-            .testTag("download_track_row_${item.trackId}")
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(10.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Position / Playing indicator
-            Box(
-                modifier = Modifier.size(24.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                when {
-                    isPlaying -> {
-                        EqualizerIndicator(isPlaying = true, color = EmeraldAccent)
-                    }
-                    isCurrentlyPlaying -> {
-                        Icon(
-                            imageVector = Icons.Default.PlayArrow,
-                            contentDescription = "Current Track",
-                            tint = EmeraldAccent,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-                    else -> {
-                        Text(
-                            text = "$position",
-                            color = TextTertiary,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.width(10.dp))
-
-            // Artwork
+        // 64dp Artwork
+        Box(modifier = Modifier.size(64.dp)) {
             AlbumArtwork(
+                trackId = item.trackId,
                 artworkUri = item.artworkUri,
                 modifier = Modifier
-                    .size(44.dp)
+                    .fillMaxSize()
                     .clip(RoundedCornerShape(6.dp)),
-                targetSizePx = 128
+                targetSizePx = 256
             )
 
-            Spacer(modifier = Modifier.width(12.dp))
-
-            // Title, Artist, Duration & Size
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = item.title,
-                    color = if (isCurrentlyPlaying) EmeraldAccent else TextPrimary,
-                    fontSize = 13.sp,
-                    fontWeight = if (isCurrentlyPlaying) FontWeight.Bold else FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = item.artist,
-                    color = TextSecondary,
-                    fontSize = 11.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+            if (isCurrentlyPlaying) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(6.dp)),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        text = "${formatDuration(item.durationMs)} • ${formatBytes(item.fileSizeBytes)}",
-                        color = TextTertiary,
-                        fontSize = 10.sp
-                    )
-
-                    // Bucket Badge
-                    Surface(
-                        color = if (isPinned) EmeraldAccent.copy(alpha = 0.15f) else Color(0xFF00E5FF).copy(alpha = 0.12f),
-                        shape = RoundedCornerShape(4.dp)
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(2.dp),
-                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
-                        ) {
-                            if (isPinned) {
-                                Icon(
-                                    imageVector = Icons.Default.PushPin,
-                                    contentDescription = null,
-                                    tint = EmeraldAccent,
-                                    modifier = Modifier.size(8.dp)
-                                )
-                            }
-                            Text(
-                                text = if (isPinned) "Pinned" else "Smart",
-                                color = if (isPinned) EmeraldAccent else Color(0xFF00E5FF),
-                                fontSize = 9.sp,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                        }
+                    if (isPlaying) {
+                        EqualizerIndicator(
+                            isPlaying = true,
+                            color = EmeraldAccent,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.PlayArrow,
+                            contentDescription = "Playing",
+                            tint = EmeraldAccent,
+                            modifier = Modifier.size(24.dp)
+                        )
                     }
                 }
             }
+        }
 
-            Spacer(modifier = Modifier.width(6.dp))
+        Spacer(modifier = Modifier.width(12.dp))
 
-            // Pin/Unpin action
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = item.title,
+                color = if (isCurrentlyPlaying) EmeraldAccent else TextPrimary,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Default.FileDownload,
+                    contentDescription = "Downloaded",
+                    tint = EmeraldAccent,
+                    modifier = Modifier.size(13.dp)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    text = "${item.artist} • ${formatBytes(item.fileSizeBytes)}",
+                    color = TextSecondary,
+                    fontSize = 12.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+
+        // Actions: Pin / Delete
+        Row(verticalAlignment = Alignment.CenterVertically) {
             IconButton(
-                onClick = if (isPinned) onUnpin else onPin,
-                modifier = Modifier
-                    .size(32.dp)
-                    .testTag("btn_pin_${item.trackId}")
+                onClick = { if (isPinned) onUnpin() else onPin() },
+                modifier = Modifier.size(32.dp)
             ) {
                 Icon(
                     imageVector = Icons.Default.PushPin,
-                    contentDescription = if (isPinned) "Unpin download" else "Pin permanently",
+                    contentDescription = if (isPinned) "Unpin" else "Pin",
                     tint = if (isPinned) EmeraldAccent else TextTertiary,
                     modifier = Modifier.size(16.dp)
                 )
             }
 
-            // Delete action
             IconButton(
                 onClick = onDelete,
-                modifier = Modifier
-                    .size(32.dp)
-                    .testTag("btn_delete_${item.trackId}")
+                modifier = Modifier.size(32.dp)
             ) {
                 Icon(
                     imageVector = Icons.Default.Delete,
-                    contentDescription = "Delete download",
+                    contentDescription = "Delete",
                     tint = TextTertiary,
                     modifier = Modifier.size(16.dp)
                 )
@@ -1203,6 +1204,9 @@ private fun DownloadedTrackRow(
     }
 }
 
+/**
+ * Retained for HomeScreen and external callers.
+ */
 @Composable
 fun PlaylistCard(
     playlist: PlaylistSummary,
@@ -1224,7 +1228,6 @@ fun PlaylistCard(
             .testTag("playlist_card_${playlist.playlistId}")
     ) {
         Column(modifier = Modifier.padding(10.dp)) {
-            // Artwork (Priority: artworkUri -> firstTrackArtworkUrl -> placeholder)
             Box(modifier = Modifier.fillMaxWidth()) {
                 PlaylistArtwork(
                     artworkUri = playlist.artworkUri,
@@ -1236,7 +1239,6 @@ fun PlaylistCard(
                     targetSizePx = 256
                 )
 
-                // Overflow Menu icon
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
@@ -1284,7 +1286,6 @@ fun PlaylistCard(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Title
             Text(
                 text = playlist.title,
                 color = TextPrimary,
@@ -1296,7 +1297,6 @@ fun PlaylistCard(
 
             Spacer(modifier = Modifier.height(2.dp))
 
-            // Subtitle: Track Count & Provider Badge
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -1324,3 +1324,82 @@ fun PlaylistCard(
         }
     }
 }
+
+@Composable
+private fun ProfileSettingsDialog(
+    initialName: String,
+    onDismiss: () -> Unit,
+    onSave: (String) -> Unit
+) {
+    var nameInput by remember { mutableStateOf(initialName) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = DarkSurface,
+        title = {
+            Text(
+                text = "Profile Settings",
+                color = TextPrimary,
+                fontWeight = FontWeight.Bold,
+                fontSize = 18.sp
+            )
+        },
+        text = {
+            Column {
+                Text(
+                    text = "Set your display name to personalize your avatar initial.",
+                    color = TextSecondary,
+                    fontSize = 13.sp,
+                    modifier = Modifier.padding(bottom = 12.dp)
+                )
+                OutlinedTextField(
+                    value = nameInput,
+                    onValueChange = { nameInput = it },
+                    placeholder = { Text("Display Name (e.g. Raju, Simran)", color = TextTertiary) },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = TextPrimary,
+                        unfocusedTextColor = TextPrimary,
+                        focusedBorderColor = EmeraldAccent,
+                        unfocusedBorderColor = DarkSurfaceBorder,
+                        cursorColor = EmeraldAccent
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("input_profile_name")
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    onSave(nameInput.trim())
+                    onDismiss()
+                },
+                modifier = Modifier.testTag("btn_save_profile")
+            ) {
+                Text("Save", color = EmeraldAccent, fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            Row {
+                if (nameInput.isNotBlank()) {
+                    TextButton(
+                        onClick = {
+                            nameInput = ""
+                            onSave("")
+                            onDismiss()
+                        },
+                        modifier = Modifier.testTag("btn_clear_profile")
+                    ) {
+                        Text("Clear", color = TextSecondary)
+                    }
+                }
+                TextButton(onClick = onDismiss) {
+                    Text("Cancel", color = TextSecondary)
+                }
+            }
+        }
+    )
+}
+

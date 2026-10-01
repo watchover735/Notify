@@ -22,6 +22,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
+import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
@@ -37,9 +38,11 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -49,8 +52,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.notify.core.playback.PlaybackStateUtils
+import com.notify.core.playback.SleepTimerManager
 import com.notify.download.db.PlaylistSummary
 import com.notify.playback.PlaybackUiState
+import com.notify.ui.SnackbarManager
 import com.notify.ui.components.AlbumArtwork
 import com.notify.ui.components.ErrorCard
 import com.notify.ui.theme.DarkBackground
@@ -60,6 +65,7 @@ import com.notify.ui.theme.EmeraldAccent
 import com.notify.ui.theme.TextPrimary
 import com.notify.ui.theme.TextSecondary
 import com.notify.ui.theme.TextTertiary
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -89,8 +95,11 @@ fun NowPlayingScreen(
     modifier: Modifier = Modifier
 ) {
     val track = playbackState.currentTrack
+    val sleepTimerState by SleepTimerManager.sleepTimerState.collectAsState()
+    val coroutineScope = rememberCoroutineScope()
     var showQueueSheet by remember { mutableStateOf(false) }
     var showAddToPlaylistSheet by remember { mutableStateOf(false) }
+    var showSleepTimerSheet by remember { mutableStateOf(false) }
 
     androidx.compose.runtime.DisposableEffect(Unit) {
         onDispose {
@@ -111,7 +120,7 @@ fun NowPlayingScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.SpaceBetween
         ) {
-            // Top Bar: Collapse Button & Title
+            // Top Bar: Collapse Button, Title & Actions
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -126,21 +135,63 @@ fun NowPlayingScreen(
                     )
                 }
 
-                Text(
-                    text = "NOW PLAYING",
-                    color = TextSecondary,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.sp
-                )
-
-                IconButton(onClick = { showQueueSheet = true }) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.QueueMusic,
-                        contentDescription = "Open Queue",
-                        tint = TextPrimary,
-                        modifier = Modifier.size(26.dp)
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = "NOW PLAYING",
+                        color = TextSecondary,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.sp
                     )
+                    if (sleepTimerState.isActive) {
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = EmeraldAccent.copy(alpha = 0.15f),
+                            border = BorderStroke(1.dp, EmeraldAccent.copy(alpha = 0.4f)),
+                            modifier = Modifier
+                                .clickable { showSleepTimerSheet = true }
+                                .padding(top = 4.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Bedtime,
+                                    contentDescription = null,
+                                    tint = EmeraldAccent,
+                                    modifier = Modifier.size(11.dp)
+                                )
+                                Text(
+                                    text = "Sleep: ${sleepTimerState.displayText}",
+                                    color = EmeraldAccent,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = { showSleepTimerSheet = true }) {
+                        Icon(
+                            imageVector = Icons.Default.Bedtime,
+                            contentDescription = "Sleep Timer",
+                            tint = if (sleepTimerState.isActive) EmeraldAccent else TextSecondary,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+
+                    IconButton(onClick = { showQueueSheet = true }) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.QueueMusic,
+                            contentDescription = "Open Queue",
+                            tint = TextPrimary,
+                            modifier = Modifier.size(26.dp)
+                        )
+                    }
                 }
             }
 
@@ -153,7 +204,7 @@ fun NowPlayingScreen(
                 )
             }
 
-            // Center: Album Artwork
+            // Center: Album Artwork (HD: 1080px)
             Box(
                 modifier = Modifier
                     .fillMaxWidth(0.85f)
@@ -165,7 +216,7 @@ fun NowPlayingScreen(
                     track = track,
                     modifier = Modifier.fillMaxSize(),
                     shape = RoundedCornerShape(16.dp),
-                    targetSizePx = 512
+                    targetSizePx = 1080
                 )
             }
 
@@ -383,6 +434,7 @@ fun NowPlayingScreen(
             FullPlaybackControls(
                 isPlaying = playbackState.isPlaying,
                 shuffleEnabled = playbackState.shuffleEnabled,
+                shuffleMode = playbackState.shuffleMode,
                 repeatMode = playbackState.repeatMode,
                 abRepeatState = playbackState.abRepeatState,
                 onTogglePlayPause = onTogglePlayPause,
@@ -477,5 +529,40 @@ fun NowPlayingScreen(
                 }
             }
         }
+    }
+
+    if (showSleepTimerSheet) {
+        SleepTimerBottomSheet(
+            currentState = sleepTimerState,
+            onSelectOption = { option ->
+                when (option) {
+                    is SleepTimerOption.Off -> {
+                        SleepTimerManager.cancelTimer()
+                        coroutineScope.launch {
+                            SnackbarManager.emit("Sleep timer off")
+                        }
+                    }
+                    is SleepTimerOption.EndOfTrack -> {
+                        SleepTimerManager.setEndOfTrack()
+                        coroutineScope.launch {
+                            SnackbarManager.emit("Music will stop after current track")
+                        }
+                    }
+                    is SleepTimerOption.OneHour -> {
+                        SleepTimerManager.setTimer(60 * 60 * 1000L)
+                        coroutineScope.launch {
+                            SnackbarManager.emit("Music will stop in 1 hour")
+                        }
+                    }
+                    is SleepTimerOption.Minutes -> {
+                        SleepTimerManager.setTimer(option.durationMs)
+                        coroutineScope.launch {
+                            SnackbarManager.emit("Music will stop in ${option.count} min")
+                        }
+                    }
+                }
+            },
+            onDismiss = { showSleepTimerSheet = false }
+        )
     }
 }

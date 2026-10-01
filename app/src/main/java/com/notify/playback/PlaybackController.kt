@@ -19,6 +19,7 @@ import com.notify.core.local.LocalAudioResult
 import com.notify.core.model.AudioSource
 import com.notify.core.model.PlaybackError
 import com.notify.core.model.RepeatMode
+import com.notify.core.model.ShuffleMode
 import com.notify.core.model.Track
 import com.notify.core.playback.MediaItemMapper
 import com.notify.core.playback.NotiFyPlaybackService
@@ -72,7 +73,10 @@ class PlaybackController(
                         currentIndex = if (coordState.currentIndex >= 0) coordState.currentIndex else current.currentIndex,
                         isAutoplayEnabled = coordState.isAutoplayEnabled,
                         isPreparingNext = coordState.isPreparingNext,
-                        actionMessage = coordState.message
+                        shuffleMode = coordState.shuffleMode,
+                        shuffleEnabled = coordState.shuffleMode != ShuffleMode.OFF,
+                        actionMessage = coordState.message,
+                        isResolvingStream = coordState.isResolvingStream
                     )
                 }
             }
@@ -371,7 +375,14 @@ class PlaybackController(
         val isPlaying = controller.isPlaying
         val isBuffering = controller.playbackState == Player.STATE_BUFFERING
         val isSeekable = controller.isCurrentMediaItemSeekable
-        val shuffleEnabled = controller.shuffleModeEnabled
+        val shuffleMode = if (coordState.shuffleMode != ShuffleMode.OFF) {
+            coordState.shuffleMode
+        } else if (controller.shuffleModeEnabled) {
+            ShuffleMode.SHUFFLE
+        } else {
+            ShuffleMode.OFF
+        }
+        val shuffleEnabled = shuffleMode != ShuffleMode.OFF
         val repeatMode = when (controller.repeatMode) {
             Player.REPEAT_MODE_ONE -> RepeatMode.ONE
             Player.REPEAT_MODE_ALL -> RepeatMode.ALL
@@ -394,6 +405,7 @@ class PlaybackController(
                 isControllerConnected = true,
                 isSeekable = isSeekable,
                 shuffleEnabled = shuffleEnabled,
+                shuffleMode = shuffleMode,
                 repeatMode = repeatMode,
                 isAutoplayEnabled = coordState.isAutoplayEnabled,
                 isPreparingNext = coordState.isPreparingNext,
@@ -464,7 +476,8 @@ class PlaybackController(
         track: Track,
         streamUrl: String,
         origin: com.notify.core.model.PlaybackOrigin,
-        requestId: String? = null
+        requestId: String? = null,
+        contextTracks: List<Track> = emptyList()
     ) {
         _uiState.update { it.copy(playbackError = null) }
         val queueEntry = com.notify.core.model.QueueEntry(
@@ -478,11 +491,18 @@ class PlaybackController(
             queueEntryId = queueEntry.queueId,
             playbackOrigin = origin
         )
+        val contextEntries = contextTracks.map {
+            com.notify.core.model.QueueEntry(
+                track = it,
+                origin = com.notify.core.model.QueueOrigin.PLAYLIST,
+                playbackOrigin = origin
+            )
+        }
 
         _uiState.update { current ->
             current.copy(
-                queue = listOf(track),
-                queueEntries = listOf(queueEntry),
+                queue = listOf(track) + contextTracks,
+                queueEntries = listOf(queueEntry) + contextEntries,
                 currentTrack = track,
                 currentTrackIndex = 0,
                 currentIndex = 0,
@@ -492,7 +512,13 @@ class PlaybackController(
 
         withConnectedController { controller ->
             val coordinator = PlaybackQueueCoordinator.getInstance(context)
-            coordinator.playResolvedItem(queueEntry, mediaItem, playImmediately = true, requestId = requestId)
+            coordinator.playResolvedItem(
+                entry = queueEntry,
+                mediaItem = mediaItem,
+                playImmediately = true,
+                requestId = requestId,
+                contextEntries = contextEntries
+            )
             synchronizeFromController(controller)
         }
     }
@@ -599,12 +625,25 @@ class PlaybackController(
         _uiState.update { it.copy(playbackError = null) }
     }
 
+    fun setShuffleMode(mode: ShuffleMode) {
+        val coordinator = PlaybackQueueCoordinator.getInstance(context)
+        coordinator.setShuffleMode(mode)
+        _uiState.update { it.copy(shuffleMode = mode, shuffleEnabled = mode != ShuffleMode.OFF) }
+    }
+
     fun setShuffleEnabled(enabled: Boolean) {
-        val controller = mediaController ?: return
-        dispatchOnControllerLooper(controller) {
-            controller.shuffleModeEnabled = enabled
-            synchronizeFromController(controller)
+        setShuffleMode(if (enabled) ShuffleMode.SHUFFLE else ShuffleMode.OFF)
+    }
+
+    fun cycleShuffleMode(): ShuffleMode {
+        val current = _uiState.value.shuffleMode
+        val next = when (current) {
+            ShuffleMode.OFF -> ShuffleMode.SHUFFLE
+            ShuffleMode.SHUFFLE -> ShuffleMode.SMART_SHUFFLE
+            ShuffleMode.SMART_SHUFFLE -> ShuffleMode.OFF
         }
+        setShuffleMode(next)
+        return next
     }
 
     fun setRepeatMode(mode: RepeatMode) {

@@ -28,6 +28,15 @@ import com.notify.download.stream.OnlineStreamResolver
 import com.notify.download.stream.ResolvedStreamProviderChain
 import com.notify.download.stream.StreamUrlCache
 import com.notify.playback.StartupMetricsLogger
+import com.notify.download.db.NotiFyDatabase
+import com.notify.download.db.PlaylistTrackWithPlaylist
+import com.notify.ui.library.DownloadedTrackItem
+import com.notify.core.model.DownloadBucket
+import com.notify.download.engine.OfflineDownloadManager
+import com.notify.ui.SnackbarEvent
+import com.notify.ui.SnackbarManager
+import kotlinx.coroutines.flow.map
+
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -42,6 +51,15 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
+
+/**
+ * Result model for unified local search across downloads, playlists, and device tracks.
+ */
+data class LocalSearchResult(
+    val track: Track,
+    val badgeText: String,
+    val isDownloaded: Boolean = false
+)
 
 /**
  * Manages online YouTube Music search state for SearchScreen.
@@ -192,6 +210,172 @@ class OnlineSearchViewModel(
                 initialValue = emptyList()
             )
 
+    private val database by lazy { NotiFyDatabase.getInstance(getApplication()) }
+    private val downloadManager by lazy { OfflineDownloadManager(getApplication()) }
+
+    val downloadedTracks: StateFlow<List<DownloadedTrackItem>> =
+        downloadManager.observeCompletedDownloads()
+            .map { completedList ->
+                val trackIds = completedList.map { it.trackId }.distinct()
+                val trackMap = database.trackDao().getTracksByIds(trackIds).associateBy { it.id }
+                completedList.mapNotNull { dl ->
+                    val track = trackMap[dl.trackId]
+                    val contentUri = downloadManager.getOfflinePlaybackUri(dl.trackId) ?: return@mapNotNull null
+                    DownloadedTrackItem(
+                        downloadId = dl.downloadId,
+                        trackId = dl.trackId,
+                        title = track?.title ?: "Track ${dl.providerSourceId}",
+                        artist = track?.artist ?: "Unknown Artist",
+                        album = track?.album,
+                        durationMs = dl.durationMs ?: track?.durationMs ?: 0L,
+                        artworkUri = track?.artworkUrl ?: track?.artworkUri,
+                        fileSizeBytes = dl.fileSizeBytes ?: 0L,
+                        bucket = if (dl.bucket == "PINNED") DownloadBucket.PINNED else DownloadBucket.SMART_OFFLINE,
+                        qualityProfile = dl.qualityProfile,
+                        downloadedAtEpochMs = dl.updatedAtEpochMs,
+                        contentUriString = contentUri.toString()
+                    )
+                }
+            }
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5_000),
+                initialValue = emptyList()
+            )
+
+    val playlistTracks: StateFlow<List<PlaylistTrackWithPlaylist>> =
+        database.playlistDao().observeAllPlaylistTracks()
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5_000),
+                initialValue = emptyList()
+            )
+
+    /**
+     * Unified local search across:
+     * - Downloaded tracks (marked with Downloaded badge, plays offline copy)
+     * - All playlists including Liked Songs & imported Spotify playlists (marked with playlist title badge)
+     * - Scanned device storage (MediaStore / SAF tracks)
+     *
+     * Deduplicates across playlists and local storage by normalized title & artist.
+     */
+    fun searchLocalLibrary(
+        query: String,
+        scannedTracks: List<com.notify.core.local.LocalAudioItem>
+    ): List<LocalSearchResult> {
+        val q = query.trim().lowercase()
+        if (q.isEmpty()) return emptyList()
+        val qNoSpace = q.replace(" ", "")
+
+        fun matches(title: String, artist: String, album: String?): Boolean {
+            val t = title.lowercase()
+            val a = artist.lowercase()
+            val al = album?.lowercase() ?: ""
+            if (t.contains(q) || a.contains(q) || al.contains(q)) return true
+            val tClean = t.replace(" ", "")
+            val aClean = a.replace(" ", "")
+            return tClean.contains(qNoSpace) || aClean.contains(qNoSpace)
+        }
+
+        val downloadedList = downloadedTracks.value
+        val downloadedMap = downloadedList.associateBy { it.trackId }
+        val allPlaylistList = playlistTracks.value
+
+        val rawResults = mutableListOf<LocalSearchResult>()
+
+        // 1. Downloaded tracks (highest fidelity offline playback)
+        for (dl in downloadedList) {
+            if (matches(dl.title, dl.artist, dl.album)) {
+                val track = Track(
+                    id = TrackId(ProviderId.SPOTIFY, dl.trackId),
+                    title = dl.title,
+                    artist = dl.artist,
+                    album = dl.album,
+                    durationMs = dl.durationMs,
+                    artworkUri = dl.artworkUri,
+                    source = AudioSource.Local(dl.contentUriString)
+                )
+                rawResults.add(
+                    LocalSearchResult(
+                        track = track,
+                        badgeText = "Downloaded",
+                        isDownloaded = true
+                    )
+                )
+            }
+        }
+
+        // 2. Playlists (including Liked Songs & imported Spotify playlists)
+        for (pt in allPlaylistList) {
+            if (matches(pt.title, pt.artist, pt.album)) {
+                val isDl = downloadedMap.containsKey(pt.trackId)
+                val dlItem = downloadedMap[pt.trackId]
+                val localUri = dlItem?.contentUriString ?: pt.localContentUri
+                val source = if (!localUri.isNullOrBlank()) {
+                    AudioSource.Local(localUri)
+                } else {
+                    AudioSource.Remote(
+                        if (pt.trackId.startsWith("youtube:")) ProviderId.YOUTUBE else ProviderId.SPOTIFY,
+                        pt.trackId
+                    )
+                }
+                val track = Track(
+                    id = TrackId(if (pt.trackId.startsWith("youtube:")) ProviderId.YOUTUBE else ProviderId.SPOTIFY, pt.trackId),
+                    title = pt.title,
+                    artist = pt.artist,
+                    album = pt.album,
+                    durationMs = pt.durationMs,
+                    artworkUri = pt.artworkUrl ?: pt.artworkUri,
+                    source = source
+                )
+                rawResults.add(
+                    LocalSearchResult(
+                        track = track,
+                        badgeText = if (isDl) "Downloaded" else pt.playlistTitle,
+                        isDownloaded = isDl
+                    )
+                )
+            }
+        }
+
+        // 3. Scanned local MediaStore / SAF tracks
+        for (localItem in scannedTracks) {
+            val t = localItem.track
+            if (matches(t.title, t.artist, t.album)) {
+                val isDl = downloadedMap.containsKey(t.id.rawId)
+                rawResults.add(
+                    LocalSearchResult(
+                        track = t,
+                        badgeText = if (isDl) "Downloaded" else "Local File",
+                        isDownloaded = isDl
+                    )
+                )
+            }
+        }
+
+        // Deduplication by normalized title and artist
+        val seen = mutableSetOf<String>()
+        val deduped = mutableListOf<LocalSearchResult>()
+
+        // Sort so that downloaded tracks and liked songs come first before other playlist copies
+        val sorted = rawResults.sortedWith(
+            compareByDescending<LocalSearchResult> { it.isDownloaded }
+                .thenByDescending { it.badgeText == "Liked Songs" }
+                .thenByDescending { it.track.source is AudioSource.Local }
+        )
+
+        for (item in sorted) {
+            val normTitle = item.track.title.lowercase().replace(Regex("[^a-z0-9]"), "")
+            val normArtist = item.track.artist.lowercase().replace(Regex("[^a-z0-9]"), "")
+            val key = "$normTitle|$normArtist"
+            if (seen.add(key) && seen.add(item.track.id.rawId)) {
+                deduped.add(item)
+            }
+        }
+
+        return deduped
+    }
+
     private val fallbackMutex = Mutex()
     private var currentRequestId = 0L
     private var searchJob: Job? = null
@@ -308,7 +492,7 @@ class OnlineSearchViewModel(
         searchJob = viewModelScope.launch {
             _uiState.value = OnlineSearchUiState.Searching(
                 query = trimmed,
-                progressText = "Searching YouTube Music…"
+                progressText = "Searching everywhere…"
             )
 
             // 2. Room candidate cache check (background IO)
@@ -748,15 +932,137 @@ class OnlineSearchViewModel(
         }
     }
 
+    fun toggleLikeCandidate(candidate: YouTubeCandidate) {
+        val repo = playlistRepository ?: return
+        val provider = candidate.provider ?: "youtube"
+        viewModelScope.launch {
+            try {
+                val isLiked = repo.isTrackLiked(provider, candidate.videoId)
+                if (isLiked) {
+                    repo.removeTrackFromLikedSongs(provider, candidate.videoId)
+                    SnackbarManager.emit(SnackbarEvent.RemovedFromLikedSongs)
+                } else {
+                    val res = repo.saveTrackToLikedSongs(
+                        title = candidate.title,
+                        artist = candidate.channelTitle ?: "Unknown Artist",
+                        album = candidate.album,
+                        durationMs = candidate.durationMs,
+                        artworkUrl = candidate.artworkUrl,
+                        provider = provider,
+                        providerSourceId = candidate.videoId
+                    )
+                    if (res is com.notify.download.db.AddTrackResult.Added || res is com.notify.download.db.AddTrackResult.AlreadyExists) {
+                        SnackbarManager.emit(SnackbarEvent.AddedToLikedSongs)
+                    } else if (res is com.notify.download.db.AddTrackResult.Failure) {
+                        SnackbarManager.emit(SnackbarEvent.ActionFailed("Failed to update Liked Songs"))
+                    }
+                }
+            } catch (e: Exception) {
+                SnackbarManager.emit(SnackbarEvent.ActionFailed("Failed to update Liked Songs"))
+            }
+        }
+    }
+
+    fun downloadCandidate(candidate: YouTubeCandidate) {
+        val repo = playlistRepository ?: return
+        val provider = candidate.provider ?: "youtube"
+        viewModelScope.launch {
+            try {
+                val canonicalTrackId = repo.resolveCanonicalTrackId(provider, candidate.videoId)
+                val downloadMgr = OfflineDownloadManager(getApplication())
+                val isDownloaded = downloadMgr.isTrackAvailableOffline(canonicalTrackId)
+                if (isDownloaded) {
+                    downloadMgr.removeDownloadForTrack(canonicalTrackId)
+                    SnackbarManager.emit(SnackbarEvent.Message("Download removed"))
+                } else {
+                    repo.saveTrackToLikedSongs(
+                        title = candidate.title,
+                        artist = candidate.channelTitle ?: "Unknown Artist",
+                        album = candidate.album,
+                        durationMs = candidate.durationMs,
+                        artworkUrl = candidate.artworkUrl,
+                        provider = provider,
+                        providerSourceId = candidate.videoId
+                    )
+                    downloadMgr.enqueueTrackDownload(canonicalTrackId, bucket = DownloadBucket.PINNED)
+                    SnackbarManager.emit(SnackbarEvent.DownloadStarted(candidate.title))
+                }
+            } catch (e: Exception) {
+                SnackbarManager.emit(SnackbarEvent.ActionFailed("Download failed to start"))
+            }
+        }
+    }
+
+    fun toggleLikeRecentItem(item: RecentSearchItemEntity) {
+        val repo = playlistRepository ?: return
+        viewModelScope.launch {
+            try {
+                val isLiked = repo.isTrackLiked(item.provider, item.providerSourceId)
+                if (isLiked) {
+                    repo.removeTrackFromLikedSongs(item.provider, item.providerSourceId)
+                    SnackbarManager.emit(SnackbarEvent.RemovedFromLikedSongs)
+                } else {
+                    val res = repo.saveTrackToLikedSongs(
+                        title = item.title,
+                        artist = item.artist,
+                        album = item.album,
+                        durationMs = item.durationMs ?: 0L,
+                        artworkUrl = item.artworkUrl,
+                        provider = item.provider,
+                        providerSourceId = item.providerSourceId
+                    )
+                    if (res is com.notify.download.db.AddTrackResult.Added || res is com.notify.download.db.AddTrackResult.AlreadyExists) {
+                        SnackbarManager.emit(SnackbarEvent.AddedToLikedSongs)
+                    } else if (res is com.notify.download.db.AddTrackResult.Failure) {
+                        SnackbarManager.emit(SnackbarEvent.ActionFailed("Failed to update Liked Songs"))
+                    }
+                }
+            } catch (e: Exception) {
+                SnackbarManager.emit(SnackbarEvent.ActionFailed("Failed to update Liked Songs"))
+            }
+        }
+    }
+
+    fun downloadRecentItem(item: RecentSearchItemEntity) {
+        val repo = playlistRepository ?: return
+        viewModelScope.launch {
+            try {
+                val canonicalTrackId = repo.resolveCanonicalTrackId(item.provider, item.providerSourceId)
+                val downloadMgr = OfflineDownloadManager(getApplication())
+                val isDownloaded = downloadMgr.isTrackAvailableOffline(canonicalTrackId)
+                if (isDownloaded) {
+                    downloadMgr.removeDownloadForTrack(canonicalTrackId)
+                    SnackbarManager.emit(SnackbarEvent.Message("Download removed"))
+                } else {
+                    repo.saveTrackToLikedSongs(
+                        title = item.title,
+                        artist = item.artist,
+                        album = item.album,
+                        durationMs = item.durationMs ?: 0L,
+                        artworkUrl = item.artworkUrl,
+                        provider = item.provider,
+                        providerSourceId = item.providerSourceId
+                    )
+                    downloadMgr.enqueueTrackDownload(canonicalTrackId, bucket = DownloadBucket.PINNED)
+                    SnackbarManager.emit(SnackbarEvent.DownloadStarted(item.title))
+                }
+            } catch (e: Exception) {
+                SnackbarManager.emit(SnackbarEvent.ActionFailed("Download failed to start"))
+            }
+        }
+    }
+
     /** Adds a recent media item to a user playlist if absent. */
     fun addRecentItemToPlaylist(
         playlistId: String,
+        playlistTitle: String,
         item: RecentSearchItemEntity,
         onResult: (AddToPlaylistUiResult) -> Unit = {}
     ) {
+        val repo = playlistRepository ?: return
         viewModelScope.launch {
             try {
-                val res = playlistRepository?.addTrackToPlaylistIfAbsent(
+                val res = repo.addTrackToPlaylistIfAbsent(
                     playlistId = playlistId,
                     title = item.title,
                     artist = item.artist,
@@ -767,12 +1073,32 @@ class OnlineSearchViewModel(
                     providerSourceId = item.providerSourceId
                 )
                 when (res) {
-                    is com.notify.download.db.AddTrackResult.Added -> onResult(AddToPlaylistUiResult.ADDED)
-                    is com.notify.download.db.AddTrackResult.AlreadyExists -> onResult(AddToPlaylistUiResult.ALREADY_EXISTS)
-                    else -> onResult(AddToPlaylistUiResult.FAILED)
+                    is com.notify.download.db.AddTrackResult.Added -> {
+                        onResult(AddToPlaylistUiResult.ADDED)
+                        val canonicalTrackId = repo.resolveCanonicalTrackId(item.provider, item.providerSourceId)
+                        SnackbarManager.emit(
+                            SnackbarEvent.AddedToPlaylist(
+                                playlistName = playlistTitle,
+                                onUndo = {
+                                    viewModelScope.launch {
+                                        repo.removeTrackFromPlaylistByTrackId(playlistId, canonicalTrackId)
+                                    }
+                                }
+                            )
+                        )
+                    }
+                    is com.notify.download.db.AddTrackResult.AlreadyExists -> {
+                        onResult(AddToPlaylistUiResult.ALREADY_EXISTS)
+                        SnackbarManager.emit(SnackbarEvent.AlreadyInPlaylist(playlistTitle))
+                    }
+                    else -> {
+                        onResult(AddToPlaylistUiResult.FAILED)
+                        SnackbarManager.emit(SnackbarEvent.ActionFailed("Failed to add to $playlistTitle"))
+                    }
                 }
             } catch (_: Exception) {
                 onResult(AddToPlaylistUiResult.FAILED)
+                SnackbarManager.emit(SnackbarEvent.ActionFailed("Failed to add to $playlistTitle"))
             }
         }
     }
@@ -780,39 +1106,68 @@ class OnlineSearchViewModel(
     /** Adds a search candidate to a user playlist if absent. */
     fun addCandidateToPlaylist(
         playlistId: String,
+        playlistTitle: String,
         candidate: YouTubeCandidate,
         onResult: (AddToPlaylistUiResult) -> Unit = {}
     ) {
+        val repo = playlistRepository ?: return
+        val provider = candidate.provider ?: "youtube"
         viewModelScope.launch {
             try {
-                val res = playlistRepository?.addTrackToPlaylistIfAbsent(
+                val res = repo.addTrackToPlaylistIfAbsent(
                     playlistId = playlistId,
                     title = candidate.title,
                     artist = candidate.channelTitle ?: "Unknown Artist",
                     album = candidate.album,
                     durationMs = candidate.durationMs,
                     artworkUrl = candidate.artworkUrl,
-                    provider = candidate.provider ?: "youtube",
+                    provider = provider,
                     providerSourceId = candidate.videoId
                 )
                 when (res) {
-                    is com.notify.download.db.AddTrackResult.Added -> onResult(AddToPlaylistUiResult.ADDED)
-                    is com.notify.download.db.AddTrackResult.AlreadyExists -> onResult(AddToPlaylistUiResult.ALREADY_EXISTS)
-                    else -> onResult(AddToPlaylistUiResult.FAILED)
+                    is com.notify.download.db.AddTrackResult.Added -> {
+                        onResult(AddToPlaylistUiResult.ADDED)
+                        val canonicalTrackId = repo.resolveCanonicalTrackId(provider, candidate.videoId)
+                        SnackbarManager.emit(
+                            SnackbarEvent.AddedToPlaylist(
+                                playlistName = playlistTitle,
+                                onUndo = {
+                                    viewModelScope.launch {
+                                        repo.removeTrackFromPlaylistByTrackId(playlistId, canonicalTrackId)
+                                    }
+                                }
+                            )
+                        )
+                    }
+                    is com.notify.download.db.AddTrackResult.AlreadyExists -> {
+                        onResult(AddToPlaylistUiResult.ALREADY_EXISTS)
+                        SnackbarManager.emit(SnackbarEvent.AlreadyInPlaylist(playlistTitle))
+                    }
+                    else -> {
+                        onResult(AddToPlaylistUiResult.FAILED)
+                        SnackbarManager.emit(SnackbarEvent.ActionFailed("Failed to add to $playlistTitle"))
+                    }
                 }
             } catch (_: Exception) {
                 onResult(AddToPlaylistUiResult.FAILED)
+                SnackbarManager.emit(SnackbarEvent.ActionFailed("Failed to add to $playlistTitle"))
             }
         }
     }
 
     /** Creates a new playlist from the Add-to-Playlist chooser. */
     fun createPlaylist(title: String, onComplete: (PlaylistEntity?) -> Unit = {}) {
+        val trimmed = title.trim()
+        if (trimmed.isEmpty()) return
         viewModelScope.launch {
             try {
-                val pl = playlistRepository?.createPlaylist(title)
+                val pl = playlistRepository?.createPlaylist(trimmed)
+                if (pl != null) {
+                    SnackbarManager.emit(SnackbarEvent.PlaylistCreated(trimmed))
+                }
                 onComplete(pl)
             } catch (_: Exception) {
+                SnackbarManager.emit(SnackbarEvent.ActionFailed("Failed to create playlist"))
                 onComplete(null)
             }
         }
@@ -820,25 +1175,35 @@ class OnlineSearchViewModel(
 
     /** Creates a new playlist and immediately adds a recent media item to it. */
     fun createPlaylistAndAddRecentItem(title: String, item: RecentSearchItemEntity) {
+        val trimmed = title.trim()
+        if (trimmed.isEmpty()) return
         viewModelScope.launch {
             try {
-                val pl = playlistRepository?.createPlaylist(title)
+                val pl = playlistRepository?.createPlaylist(trimmed)
                 if (pl != null) {
-                    addRecentItemToPlaylist(pl.playlistId, item)
+                    SnackbarManager.emit(SnackbarEvent.PlaylistCreated(trimmed))
+                    addRecentItemToPlaylist(pl.playlistId, trimmed, item)
                 }
-            } catch (_: Exception) {}
+            } catch (_: Exception) {
+                SnackbarManager.emit(SnackbarEvent.ActionFailed("Failed to create playlist"))
+            }
         }
     }
 
     /** Creates a new playlist and immediately adds a search candidate to it. */
     fun createPlaylistAndAddCandidate(title: String, candidate: YouTubeCandidate) {
+        val trimmed = title.trim()
+        if (trimmed.isEmpty()) return
         viewModelScope.launch {
             try {
-                val pl = playlistRepository?.createPlaylist(title)
+                val pl = playlistRepository?.createPlaylist(trimmed)
                 if (pl != null) {
-                    addCandidateToPlaylist(pl.playlistId, candidate)
+                    SnackbarManager.emit(SnackbarEvent.PlaylistCreated(trimmed))
+                    addCandidateToPlaylist(pl.playlistId, trimmed, candidate)
                 }
-            } catch (_: Exception) {}
+            } catch (_: Exception) {
+                SnackbarManager.emit(SnackbarEvent.ActionFailed("Failed to create playlist"))
+            }
         }
     }
 

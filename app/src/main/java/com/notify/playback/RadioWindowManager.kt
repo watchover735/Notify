@@ -60,6 +60,7 @@ class RadioWindowManager(
     private val watchNextProvider: InnerTubeWatchNextProvider,
     private val fallbackSearchProvider: OnlineCatalogSearchProvider,
     private val streamResolver: AudioStreamResolver,
+    private val random: kotlin.random.Random = kotlin.random.Random.Default,
     private val dispatchOnPlayerLooper: ((Player) -> Unit) -> Unit
 ) {
     companion object {
@@ -67,6 +68,10 @@ class RadioWindowManager(
         const val MAX_FUTURE_TRACKS = 3
         const val CANDIDATE_BATCH_SIZE = 10
         const val FALLBACK_SEARCH_BATCH_SIZE = 15
+        const val TOP_CANDIDATE_POOL_SIZE = 6
+        const val RECENT_HISTORY_MAX_SIZE = 15
+        private const val PREFS_NAME = "notify_radio_recent_history"
+        private const val KEY_RECENT_KEYS = "recent_played_keys"
     }
 
     private val windowMutex = Mutex()
@@ -86,12 +91,57 @@ class RadioWindowManager(
     private val queuedKeys = LinkedHashSet<String>()
     private val inFlightKeys = HashSet<String>()
 
+    // Cross-session / rolling recent history to prevent repeats of last ~15 songs
+    private val recentHistoryKeys = ArrayDeque<String>()
+
     // Future candidate window (logical entries, max size 3)
     private val futureWindow = ArrayDeque<QueueEntry>()
 
     // Active replenishment coroutine job
     private var replenishJob: Job? = null
     private var preloadJob: Job? = null
+
+    init {
+        loadRecentHistory()
+    }
+
+    private fun loadRecentHistory() {
+        if (context == null) return
+        try {
+            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val jsonStr = prefs.getString(KEY_RECENT_KEYS, null)
+            if (!jsonStr.isNullOrBlank()) {
+                val arr = org.json.JSONArray(jsonStr)
+                for (i in 0 until arr.length()) {
+                    val k = arr.optString(i)
+                    if (k.isNotBlank() && !recentHistoryKeys.contains(k)) {
+                        recentHistoryKeys.addLast(k)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to load recent radio history: ${e.message}")
+        }
+    }
+
+    private fun recordRecentPlayed(key: String) {
+        if (key.isBlank()) return
+        recentHistoryKeys.remove(key)
+        recentHistoryKeys.addLast(key)
+        while (recentHistoryKeys.size > RECENT_HISTORY_MAX_SIZE) {
+            recentHistoryKeys.removeFirst()
+        }
+        if (context != null) {
+            try {
+                val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                val arr = org.json.JSONArray()
+                recentHistoryKeys.forEach { arr.put(it) }
+                prefs.edit().putString(KEY_RECENT_KEYS, arr.toString()).apply()
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to persist recent radio history: ${e.message}")
+            }
+        }
+    }
 
     /**
      * Resets all internal state, sets, and queued candidates for a genuinely new playback session.
@@ -133,6 +183,7 @@ class RadioWindowManager(
                 currentTrackKey = key
                 // Contract: Add current track to playedKeys immediately when confirmed playback starts
                 playedKeys.add(key)
+                recordRecentPlayed(key)
                 queuedKeys.remove(key)
                 inFlightKeys.remove(key)
             }
@@ -169,11 +220,13 @@ class RadioWindowManager(
                 if (completedEntry != null) {
                     val completedKey = CanonicalMediaKey.fromTrack(completedEntry.track)
                     playedKeys.add(completedKey)
+                    recordRecentPlayed(completedKey)
                     queuedKeys.remove(completedKey)
                 }
 
                 currentTrackKey = nextKey
                 playedKeys.add(nextKey)
+                recordRecentPlayed(nextKey)
                 queuedKeys.remove(nextKey)
                 inFlightKeys.remove(nextKey)
 
@@ -317,9 +370,9 @@ class RadioWindowManager(
         val selected = mutableListOf<QueueEntry>()
 
         windowMutex.withLock {
-            for (candidate in candidates) {
-                if (selected.size >= limit) break
+            val validCandidates = mutableListOf<YouTubeCandidate>()
 
+            for (candidate in candidates) {
                 val canonicalKey = CanonicalMediaKey.fromResolved("youtube", candidate.videoId)
 
                 val rejectionReason = when {
@@ -334,23 +387,48 @@ class RadioWindowManager(
                 if (rejectionReason != null) {
                     Log.d(TAG, "CANDIDATE_REJECTED key=$canonicalKey reason=$rejectionReason")
                 } else {
-                    val track = Track(
-                        id = TrackId(ProviderId.YOUTUBE, candidate.videoId),
-                        title = candidate.title,
-                        artist = candidate.channelTitle ?: "YouTube Music",
-                        album = candidate.album,
-                        durationMs = candidate.durationMs,
-                        artworkUri = candidate.artworkUrl,
-                        source = AudioSource.Remote(ProviderId.YOUTUBE, candidate.videoId)
-                    )
-                    selected.add(
-                        QueueEntry(
-                            track = track,
-                            origin = QueueOrigin.RADIO,
-                            playbackOrigin = PlaybackOrigin.RADIO_AUTOPLAY
-                        )
-                    )
+                    validCandidates.add(candidate)
                 }
+            }
+
+            if (validCandidates.isEmpty()) {
+                return@withLock emptyList<QueueEntry>()
+            }
+
+            // Exclude recently played songs from recent history (last ~10-15 tracks)
+            val freshCandidates = validCandidates.filter { candidate ->
+                val k = CanonicalMediaKey.fromResolved("youtube", candidate.videoId)
+                !recentHistoryKeys.contains(k)
+            }
+
+            // Prefer fresh candidates to prevent immediate repeats; fallback to validCandidates if pool is too small
+            val poolSource = if (freshCandidates.isNotEmpty()) freshCandidates else validCandidates
+
+            // Select from top candidate pool (up to TOP_CANDIDATE_POOL_SIZE = 6) with variety
+            val poolSize = minOf(poolSource.size, TOP_CANDIDATE_POOL_SIZE)
+            val topPool = poolSource.take(poolSize)
+            val shuffledTop = topPool.shuffled(random)
+            val combinedList = shuffledTop + poolSource.drop(poolSize)
+
+            for (candidate in combinedList) {
+                if (selected.size >= limit) break
+
+                val track = Track(
+                    id = TrackId(ProviderId.YOUTUBE, candidate.videoId),
+                    title = candidate.title,
+                    artist = candidate.channelTitle ?: "YouTube Music",
+                    album = candidate.album,
+                    durationMs = candidate.durationMs,
+                    artworkUri = candidate.artworkUrl,
+                    source = AudioSource.Remote(ProviderId.YOUTUBE, candidate.videoId)
+                )
+                selected.add(
+                    QueueEntry(
+                        track = track,
+                        origin = QueueOrigin.RADIO,
+                        playbackOrigin = PlaybackOrigin.RADIO_AUTOPLAY
+                    )
+                )
             }
         }
 
@@ -593,6 +671,72 @@ class RadioWindowManager(
     fun getResolutionState(): NextResolutionState = resolutionState
 
     /**
+     * Shared recommendation fetcher for Smart Shuffle.
+     * Reuses the exact same candidate fetching and variety filtering logic.
+     */
+    suspend fun getRecommendationsForSmartShuffle(
+        seedTrack: Track,
+        excludeKeys: Set<String>,
+        count: Int = 1
+    ): List<QueueEntry> {
+        val seedVideoId = extractVideoId(seedTrack)
+        val candidates = mutableListOf<YouTubeCandidate>()
+
+        if (!seedVideoId.isNullOrBlank()) {
+            candidates.addAll(fetchCandidatesWithFallback(seedTrack, seedVideoId, activeSessionId))
+        }
+
+        if (candidates.size < 3) {
+            val query = listOf(seedTrack.artist, seedTrack.title).filter { it.isNotBlank() }.joinToString(" ")
+            if (query.isNotBlank()) {
+                val searchResult = fallbackSearchProvider.search(query, limit = FALLBACK_SEARCH_BATCH_SIZE)
+                val list = searchResult.getOrNull().orEmpty().shuffled(random)
+                for (c in list) {
+                    if (candidates.none { it.videoId == c.videoId }) {
+                        candidates.add(c)
+                    }
+                }
+            }
+        }
+
+        if (candidates.isEmpty()) return emptyList()
+
+        return windowMutex.withLock {
+            val valid = candidates.filter { candidate ->
+                val canonicalKey = CanonicalMediaKey.fromResolved("youtube", candidate.videoId)
+                !excludeKeys.contains(canonicalKey) &&
+                !playedKeys.contains(canonicalKey) &&
+                !queuedKeys.contains(canonicalKey) &&
+                !recentHistoryKeys.contains(canonicalKey) &&
+                canonicalKey != currentTrackKey
+            }
+            if (valid.isEmpty()) return@withLock emptyList<QueueEntry>()
+
+            // Top candidate pool with variety
+            val poolSize = minOf(valid.size, TOP_CANDIDATE_POOL_SIZE)
+            val topPool = valid.take(poolSize).shuffled(random)
+            val combined = topPool + valid.drop(poolSize)
+
+            combined.take(count).map { candidate ->
+                val track = Track(
+                    id = TrackId(ProviderId.YOUTUBE, candidate.videoId),
+                    title = candidate.title,
+                    artist = candidate.channelTitle ?: "YouTube Music",
+                    album = candidate.album,
+                    durationMs = candidate.durationMs,
+                    artworkUri = candidate.artworkUrl,
+                    source = AudioSource.Remote(ProviderId.YOUTUBE, candidate.videoId)
+                )
+                QueueEntry(
+                    track = track,
+                    origin = QueueOrigin.RADIO,
+                    playbackOrigin = PlaybackOrigin.SMART_SHUFFLE
+                )
+            }
+        }
+    }
+
+    /**
      * Peeks at the immediate next candidate in the future window without removing it.
      */
     suspend fun peekNextCandidate(): QueueEntry? = windowMutex.withLock { futureWindow.firstOrNull() }
@@ -603,4 +747,10 @@ class RadioWindowManager(
     suspend fun getQueuedKeys(): Set<String> = windowMutex.withLock { queuedKeys.toSet() }
     suspend fun getInFlightKeys(): Set<String> = windowMutex.withLock { inFlightKeys.toSet() }
     fun getCurrentTrackKey(): String? = currentTrackKey
+    suspend fun getRecentHistoryKeys(): List<String> = windowMutex.withLock { recentHistoryKeys.toList() }
+    suspend fun clearRecentHistoryForTests() {
+        windowMutex.withLock {
+            recentHistoryKeys.clear()
+        }
+    }
 }

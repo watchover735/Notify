@@ -122,6 +122,100 @@ class PlaylistRepository(
         playlistEntity
     }
 
+    suspend fun saveYouTubePlaylist(
+        playlistTitle: String,
+        youtubePlaylistId: String,
+        tracks: List<YouTubePlaylistTrack>,
+        artworkUrl: String?,
+        sourceUrl: String
+    ): PlaylistEntity = withContext(ioDispatcher) {
+        val playlistId = "pl_youtube_$youtubePlaylistId"
+        val now = System.currentTimeMillis()
+        val existingPlaylist = playlistDao.getPlaylistById(playlistId)
+        val playlistEntity = PlaylistEntity(
+            playlistId = playlistId,
+            title = playlistTitle,
+            sourceUrl = sourceUrl,
+            artworkUri = artworkUrl ?: existingPlaylist?.artworkUri,
+            dateCreatedEpochMs = existingPlaylist?.dateCreatedEpochMs ?: now,
+            dateModifiedEpochMs = now
+        )
+
+        val trackEntities = mutableListOf<TrackEntity>()
+        val trackSources = mutableListOf<TrackSourceEntity>()
+        val entryEntities = mutableListOf<PlaylistEntryEntity>()
+        val seenTrackIds = mutableSetOf<String>()
+
+        for (item in tracks) {
+            val trackIdStr = "youtube:${item.videoId}"
+            if (!seenTrackIds.add(trackIdStr)) {
+                entryEntities.add(
+                    PlaylistEntryEntity(
+                        playlistId = playlistId,
+                        trackId = trackIdStr,
+                        position = item.position
+                    )
+                )
+                continue
+            }
+            val existingTrack = trackDao.getTrackById(trackIdStr)
+            val trackEntity = TrackEntity(
+                id = trackIdStr,
+                title = item.title,
+                artist = item.artist,
+                album = null,
+                durationMs = item.durationMs,
+                artworkUri = item.artworkUrl ?: existingTrack?.artworkUri,
+                artworkUrl = item.artworkUrl ?: existingTrack?.artworkUrl,
+                artworkOrigin = ArtworkOrigin.YOUTUBE_MATCH,
+                spotifyId = null,
+                resolutionState = ResolutionState.MATCHED,
+                downloadState = existingTrack?.downloadState ?: DownloadState.NOT_DOWNLOADED,
+                localContentUri = existingTrack?.localContentUri,
+                dateAddedEpochMs = existingTrack?.dateAddedEpochMs ?: now
+            )
+            trackEntities.add(trackEntity)
+
+            val sourceEntity = TrackSourceEntity(
+                sourceKey = "${trackIdStr}_youtube_${item.videoId}",
+                trackId = trackIdStr,
+                provider = "YOUTUBE",
+                sourceId = item.videoId,
+                canonicalUrl = "https://www.youtube.com/watch?v=${item.videoId}",
+                confidence = 1.0f,
+                durationDeltaMs = 0L,
+                artworkUrl = item.artworkUrl,
+                selected = true
+            )
+            trackSources.add(sourceEntity)
+
+            val entryEntity = PlaylistEntryEntity(
+                playlistId = playlistId,
+                trackId = trackIdStr,
+                position = item.position
+            )
+            entryEntities.add(entryEntity)
+        }
+
+        database.withTransaction {
+            trackEntities.chunked(100).forEach { chunk ->
+                trackDao.upsertTracksSafely(chunk)
+            }
+            trackSources.chunked(100).forEach { chunk ->
+                trackDao.insertSources(chunk)
+            }
+            playlistDao.insertPlaylist(playlistEntity)
+            playlistDao.deletePlaylistEntries(playlistId)
+            entryEntities.chunked(100).forEach { chunk ->
+                for (entry in chunk) {
+                    playlistDao.insertPlaylistEntryIgnore(entry)
+                }
+            }
+        }
+
+        playlistEntity
+    }
+
     fun observePlaylistSummaries(): Flow<List<PlaylistSummary>> {
         return playlistDao.observePlaylistSummaries()
     }
@@ -579,6 +673,35 @@ class PlaylistRepository(
             }
 
             entry
+        }
+    }
+
+    /**
+     * Safely removes a track from a playlist by canonical trackId (used for Undo).
+     */
+    suspend fun removeTrackFromPlaylistByTrackId(
+        playlistId: String,
+        trackId: String
+    ): Boolean = withContext(ioDispatcher) {
+        database.withTransaction {
+            val count = playlistDao.deletePlaylistEntry(playlistId, trackId)
+            if (count > 0) {
+                // Compact positions of remaining entries
+                val remaining = playlistDao.getEntriesForPlaylistRaw(playlistId)
+                for (i in remaining.indices) {
+                    playlistDao.updateEntryPosition(remaining[i].entryId, -(i + 1))
+                }
+                for (i in remaining.indices) {
+                    playlistDao.updateEntryPosition(remaining[i].entryId, i + 1)
+                }
+                val playlist = playlistDao.getPlaylistById(playlistId)
+                if (playlist != null) {
+                    playlistDao.updatePlaylistTitle(playlistId, playlist.title, System.currentTimeMillis())
+                }
+                true
+            } else {
+                false
+            }
         }
     }
 

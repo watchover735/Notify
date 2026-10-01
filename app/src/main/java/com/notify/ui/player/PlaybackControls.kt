@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Repeat
@@ -22,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.notify.core.model.RepeatMode
+import com.notify.core.model.ShuffleMode
 import com.notify.ui.theme.DarkSurface
 import com.notify.ui.theme.EmeraldAccent
 import com.notify.ui.theme.TextPrimary
@@ -46,7 +48,8 @@ import com.notify.ui.theme.EmeraldGlow
 @Composable
 fun FullPlaybackControls(
     isPlaying: Boolean,
-    shuffleEnabled: Boolean,
+    shuffleEnabled: Boolean = false,
+    shuffleMode: ShuffleMode = if (shuffleEnabled) ShuffleMode.SHUFFLE else ShuffleMode.OFF,
     repeatMode: RepeatMode,
     abRepeatState: ABRepeatState = ABRepeatState(),
     onTogglePlayPause: () -> Unit,
@@ -63,17 +66,33 @@ fun FullPlaybackControls(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Shuffle Button
+        // Shuffle Button (3-state: Off / Shuffle / Smart Shuffle)
         IconButton(
             onClick = onToggleShuffle,
             modifier = Modifier.size(40.dp)
         ) {
-            Icon(
-                imageVector = Icons.Default.Shuffle,
-                contentDescription = if (shuffleEnabled) "Shuffle Enabled" else "Shuffle Disabled",
-                tint = if (shuffleEnabled) EmeraldAccent else TextSecondary,
-                modifier = Modifier.size(22.dp)
-            )
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = Icons.Default.Shuffle,
+                    contentDescription = when (shuffleMode) {
+                        ShuffleMode.OFF -> "Shuffle Disabled"
+                        ShuffleMode.SHUFFLE -> "Shuffle Enabled"
+                        ShuffleMode.SMART_SHUFFLE -> "Smart Shuffle Enabled"
+                    },
+                    tint = if (shuffleMode != ShuffleMode.OFF) EmeraldAccent else TextSecondary,
+                    modifier = Modifier.size(22.dp)
+                )
+                if (shuffleMode == ShuffleMode.SMART_SHUFFLE) {
+                    Icon(
+                        imageVector = Icons.Default.AutoAwesome,
+                        contentDescription = null,
+                        tint = EmeraldAccent,
+                        modifier = Modifier
+                            .size(10.dp)
+                            .align(Alignment.TopEnd)
+                    )
+                }
+            }
         }
 
         // Previous Button

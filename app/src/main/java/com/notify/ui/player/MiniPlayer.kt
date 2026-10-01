@@ -1,5 +1,10 @@
 package com.notify.ui.player
 
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -12,19 +17,23 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -79,7 +88,7 @@ fun MiniPlayer(
                 track = track,
                 modifier = Modifier.size(42.dp),
                 shape = RoundedCornerShape(8.dp),
-                targetSizePx = 128
+                targetSizePx = 192
             )
 
             Spacer(modifier = Modifier.width(10.dp))
@@ -103,17 +112,31 @@ fun MiniPlayer(
                 )
             }
 
-            // Play/Pause Action Button (consumes click, does not bubble to body)
-            IconButton(
-                onClick = onTogglePlayPause,
-                modifier = Modifier.size(44.dp)
+            // Play/Pause or Loading Spinner
+            Box(
+                modifier = Modifier.size(44.dp),
+                contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    imageVector = if (playbackState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                    contentDescription = if (playbackState.isPlaying) "Pause" else "Play",
-                    tint = EmeraldAccent,
-                    modifier = Modifier.size(28.dp)
-                )
+                if (playbackState.isResolvingStream || playbackState.isBuffering) {
+                    // Loading spinner while stream is resolving
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(24.dp),
+                        color = EmeraldAccent,
+                        strokeWidth = 2.5.dp
+                    )
+                } else {
+                    IconButton(
+                        onClick = onTogglePlayPause,
+                        modifier = Modifier.size(44.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (playbackState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                            contentDescription = if (playbackState.isPlaying) "Pause" else "Play",
+                            tint = EmeraldAccent,
+                            modifier = Modifier.size(28.dp)
+                        )
+                    }
+                }
             }
 
             // Next Track Action Button (consumes click, does not bubble to body)

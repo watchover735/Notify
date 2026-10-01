@@ -267,3 +267,25 @@ data class PlaylistSummary(
     val dateCreatedEpochMs: Long,
     val dateModifiedEpochMs: Long
 )
+
+data class PlaylistTrackWithPlaylist(
+    val trackId: String,
+    val title: String,
+    val artist: String,
+    val album: String?,
+    val durationMs: Long,
+    val artworkUri: String?,
+    val artworkUrl: String?,
+    val localContentUri: String?,
+    val playlistId: String,
+    val playlistTitle: String
+)
+
+data class YouTubePlaylistTrack(
+    val videoId: String,
+    val title: String,
+    val artist: String,
+    val durationMs: Long,
+    val artworkUrl: String?,
+    val position: Int
+)

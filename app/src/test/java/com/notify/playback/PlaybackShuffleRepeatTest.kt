@@ -61,4 +61,54 @@ class PlaybackShuffleRepeatTest {
 
         controller.release()
     }
+
+    @Test
+    fun testCycleShuffleModeTransitionsThroughThreeStates() {
+        val controller = PlaybackController(app, testScope)
+
+        assertEquals(com.notify.core.model.ShuffleMode.OFF, controller.uiState.value.shuffleMode)
+        assertFalse(controller.uiState.value.shuffleEnabled)
+
+        // 1st cycle: OFF -> SHUFFLE
+        val state1 = controller.cycleShuffleMode()
+        assertEquals(com.notify.core.model.ShuffleMode.SHUFFLE, state1)
+        assertEquals(com.notify.core.model.ShuffleMode.SHUFFLE, controller.uiState.value.shuffleMode)
+        assertTrue(controller.uiState.value.shuffleEnabled)
+
+        // 2nd cycle: SHUFFLE -> SMART_SHUFFLE
+        val state2 = controller.cycleShuffleMode()
+        assertEquals(com.notify.core.model.ShuffleMode.SMART_SHUFFLE, state2)
+        assertEquals(com.notify.core.model.ShuffleMode.SMART_SHUFFLE, controller.uiState.value.shuffleMode)
+        assertTrue(controller.uiState.value.shuffleEnabled)
+
+        // 3rd cycle: SMART_SHUFFLE -> OFF
+        val state3 = controller.cycleShuffleMode()
+        assertEquals(com.notify.core.model.ShuffleMode.OFF, state3)
+        assertEquals(com.notify.core.model.ShuffleMode.OFF, controller.uiState.value.shuffleMode)
+        assertFalse(controller.uiState.value.shuffleEnabled)
+
+        controller.release()
+    }
+
+    @Test
+    fun testSnapshotStoreSavesAndRestoresSmartShuffle() {
+        val store = PlaybackSnapshotStore(app)
+        val snapshot = com.notify.core.model.PlaybackSnapshot(
+            queue = emptyList(),
+            currentIndex = 0,
+            currentPositionMs = 1000L,
+            repeatMode = RepeatMode.OFF,
+            isShuffled = true,
+            shuffleMode = com.notify.core.model.ShuffleMode.SMART_SHUFFLE,
+            isAutoplayEnabled = false,
+            radioSeedSourceId = null
+        )
+
+        store.saveSnapshot(snapshot)
+        val restored = store.loadSnapshot()
+
+        org.junit.Assert.assertNotNull(restored)
+        assertEquals(com.notify.core.model.ShuffleMode.SMART_SHUFFLE, restored!!.shuffleMode)
+        assertTrue(restored.isShuffled)
+    }
 }

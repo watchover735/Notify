@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
     <external-files-path name="music" path="Music" />
+    <external-files-path name="downloads" path="Download" />
+    <external-files-path name="all_external" path="." />
     <files-path name="internal_music" path="." />
 </paths>
+

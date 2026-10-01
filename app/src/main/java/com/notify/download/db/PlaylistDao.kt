@@ -184,5 +184,16 @@ interface PlaylistDao {
 
     @Query("SELECT * FROM playlist_entries WHERE playlistId = :playlistId ORDER BY position ASC")
     suspend fun getEntriesForPlaylistRaw(playlistId: String): List<PlaylistEntryEntity>
+
+    @Query("""
+        SELECT t.id AS trackId, t.title, t.artist, t.album, t.durationMs,
+               t.artworkUri, t.artworkUrl, t.localContentUri,
+               p.playlistId, p.title AS playlistTitle
+        FROM playlist_entries pe
+        INNER JOIN tracks t ON pe.trackId = t.id
+        INNER JOIN playlists p ON pe.playlistId = p.playlistId
+        ORDER BY pe.position ASC
+    """)
+    fun observeAllPlaylistTracks(): Flow<List<PlaylistTrackWithPlaylist>>
 }
 

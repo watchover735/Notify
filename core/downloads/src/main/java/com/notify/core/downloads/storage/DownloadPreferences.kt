@@ -20,8 +20,8 @@ class DownloadPreferences(context: Context) {
 
         /** Default smart offline budget: 1 GB */
         const val DEFAULT_SMART_BUDGET_BYTES = 1_073_741_824L
-        /** Default free space reserve: 1 GB */
-        const val DEFAULT_FREE_SPACE_RESERVE_BYTES = 1_073_741_824L
+        /** Default free space reserve: 100 MB */
+        const val DEFAULT_FREE_SPACE_RESERVE_BYTES = 104_857_600L
         /** Default auto-save playback threshold: 30 seconds */
         const val DEFAULT_AUTO_SAVE_THRESHOLD_MS = 30_000L
     }

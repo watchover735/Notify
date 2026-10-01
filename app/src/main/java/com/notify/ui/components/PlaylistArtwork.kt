@@ -52,7 +52,10 @@ fun PlaylistArtwork(
         ?: artworkUri?.takeIf { it.isNotBlank() }
         ?: firstTrackArtworkUrl?.takeIf { it.isNotBlank() }
 
-    val validMosaic = mosaicTrackArtworkUrls.filter { it.isNotBlank() }.take(4)
+    val resolvedUrl = effectiveUrl?.let { com.notify.core.playback.ArtworkResolution.highResArtwork(it, targetSizePx) }
+    val validMosaic = mosaicTrackArtworkUrls.filter { it.isNotBlank() }.take(4).map {
+        com.notify.core.playback.ArtworkResolution.highResArtwork(it, targetSizePx / 2) ?: it
+    }
 
     Box(
         modifier = modifier
@@ -62,10 +65,10 @@ fun PlaylistArtwork(
         contentAlignment = Alignment.Center
     ) {
         when {
-            effectiveUrl != null -> {
+            resolvedUrl != null -> {
                 SubcomposeAsyncImage(
                     model = ImageRequest.Builder(LocalContext.current)
-                        .data(effectiveUrl)
+                        .data(resolvedUrl)
                         .crossfade(true)
                         .size(targetSizePx, targetSizePx)
                         .build(),

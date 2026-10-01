@@ -581,6 +581,13 @@ class PlaylistDetailViewModel(
                     lastRemovedEntry = removed
                     _uiState.update { it.copy(actionMessage = "Removed '${entry.title}' from playlist") }
                     onUndoAvailable(entry.title)
+                    val playlistTitle = repository.getPlaylistById(playlistId)?.title ?: "playlist"
+                    com.notify.ui.SnackbarManager.emit(
+                        com.notify.ui.SnackbarEvent.RemovedFromPlaylist(
+                            playlistName = playlistTitle,
+                            onUndo = { undoRemoveTrack() }
+                        )
+                    )
                 }
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e

@@ -125,10 +125,10 @@ interface OfflineDownloadDao {
 
     // ── Bulk queries ─────────────────────────────────────────────────────────
 
-    @Query("SELECT * FROM offline_downloads WHERE status = 'COMPLETED' ORDER BY lastAccessedAtEpochMs DESC")
+    @Query("SELECT * FROM offline_downloads WHERE status = 'COMPLETED' ORDER BY updatedAtEpochMs DESC, downloadId ASC")
     fun observeCompletedDownloads(): Flow<List<OfflineDownloadEntity>>
 
-    @Query("SELECT * FROM offline_downloads WHERE status = 'COMPLETED' ORDER BY lastAccessedAtEpochMs DESC")
+    @Query("SELECT * FROM offline_downloads WHERE status = 'COMPLETED' ORDER BY updatedAtEpochMs DESC, downloadId ASC")
     suspend fun getCompletedDownloads(): List<OfflineDownloadEntity>
 
     @Query("SELECT * FROM offline_downloads WHERE status IN ('PENDING', 'RESOLVING', 'DOWNLOADING', 'VALIDATING') ORDER BY createdAtEpochMs ASC")

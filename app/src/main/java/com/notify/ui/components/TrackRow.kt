@@ -87,7 +87,7 @@ fun TrackRow(
                 track = track,
                 modifier = Modifier.size(44.dp),
                 shape = RoundedCornerShape(8.dp),
-                targetSizePx = 128
+                targetSizePx = 256
             )
 
             Spacer(modifier = Modifier.width(12.dp))

@@ -691,11 +691,12 @@ private fun PlaylistTrackItem(
                 ?: entry.artworkUrl?.takeIf { it.isNotBlank() }
                 ?: entry.artworkUri?.takeIf { it.isNotBlank() }
             AlbumArtwork(
+                trackId = entry.trackId,
                 artworkUri = effectiveArtwork,
                 modifier = Modifier
                     .size(44.dp)
                     .clip(RoundedCornerShape(6.dp)),
-                targetSizePx = 128
+                targetSizePx = 256
             )
 
             Spacer(modifier = Modifier.width(12.dp))

@@ -12,7 +12,7 @@ sealed interface OnlineSearchUiState {
     /** Search request is actively executing with progress text. */
     data class Searching(
         val query: String = "",
-        val progressText: String = "Searching YouTube Music…"
+        val progressText: String = "Searching everywhere…"
     ) : OnlineSearchUiState
 
     /** Backwards-compatible loading state for legacy views/tests. */

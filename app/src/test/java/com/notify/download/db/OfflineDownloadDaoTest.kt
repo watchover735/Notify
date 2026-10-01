@@ -217,4 +217,24 @@ class OfflineDownloadDaoTest {
         assertEquals(1, list.size)
         assertEquals("flow_1", list[0].downloadId)
     }
+
+    @Test
+    fun observeCompletedDownloads_ordersByUpdatedAtDescThenDownloadIdAsc() = runBlocking {
+        val now = 1000000L
+        val d1 = createEntity(downloadId = "dl_b", trackId = "t1", status = "COMPLETED").copy(updatedAtEpochMs = now)
+        val d2 = createEntity(downloadId = "dl_a", trackId = "t2", status = "COMPLETED").copy(updatedAtEpochMs = now)
+        val d3 = createEntity(downloadId = "dl_c", trackId = "t3", status = "COMPLETED").copy(updatedAtEpochMs = now + 1000)
+
+        dao.upsert(d1)
+        dao.upsert(d2)
+        dao.upsert(d3)
+
+        val list = dao.observeCompletedDownloads().first()
+        assertEquals(3, list.size)
+        // d3 is newest
+        assertEquals("dl_c", list[0].downloadId)
+        // d2 and d1 have same updatedAt, but dl_a < dl_b alphabetically
+        assertEquals("dl_a", list[1].downloadId)
+        assertEquals("dl_b", list[2].downloadId)
+    }
 }

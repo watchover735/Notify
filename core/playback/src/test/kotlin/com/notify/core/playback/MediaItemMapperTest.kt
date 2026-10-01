@@ -168,11 +168,12 @@ class MediaItemMapperTest {
         )
 
         val mediaItem = ResolvedPlaybackItemFactory.createMediaItem(track, "https://googlevideo.com/videoplayback?id=123")
-        assertEquals(artwork, mediaItem.mediaMetadata.artworkUri?.toString())
+        val expectedArtwork = ArtworkResolution.highResArtwork(artwork, 800)
+        assertEquals(expectedArtwork, mediaItem.mediaMetadata.artworkUri?.toString())
 
         val reconstructed = MediaItemMapper.fromMediaItem(mediaItem)
         assertNotNull(reconstructed)
-        assertEquals(artwork, reconstructed?.artworkUri)
+        assertEquals(expectedArtwork, reconstructed?.artworkUri)
         assertEquals(track.id, reconstructed?.id)
         assertTrue(reconstructed?.source is AudioSource.Remote)
     }

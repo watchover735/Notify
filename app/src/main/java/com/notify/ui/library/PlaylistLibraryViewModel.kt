@@ -8,12 +8,15 @@ import androidx.lifecycle.viewModelScope
 import com.notify.download.db.PlaylistRepository
 import com.notify.download.db.PlaylistSummary
 import com.notify.download.spotify.PublicSpotifyScraper
+import com.notify.ui.SnackbarEvent
+import com.notify.ui.SnackbarManager
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
@@ -23,6 +26,16 @@ import com.notify.core.model.DownloadBucket
 import com.notify.download.db.NotiFyDatabase
 import com.notify.download.engine.OfflineDownloadManager
 import com.notify.download.engine.StorageStats
+import com.notify.download.matcher.YouTubePlaylistExtractor
+import com.notify.download.stream.FollowedArtist
+import com.notify.download.stream.FollowedArtistsRepository
+
+enum class LibraryFilter {
+    ALL,
+    PLAYLISTS,
+    ARTISTS,
+    DOWNLOADS
+}
 
 enum class LibraryTab {
     PLAYLISTS,
@@ -51,6 +64,8 @@ data class PlaylistLibraryUiState(
     val importError: String? = null,
     val actionMessage: String? = null,
     val selectedTab: LibraryTab = LibraryTab.PLAYLISTS,
+    val selectedFilter: LibraryFilter = LibraryFilter.ALL,
+    val followedArtists: List<FollowedArtist> = emptyList(),
     val downloadedTracks: List<DownloadedTrackItem> = emptyList(),
     val storageStats: StorageStats = StorageStats()
 )
@@ -64,13 +79,26 @@ class PlaylistLibraryViewModel(
 
     private val downloadManager = OfflineDownloadManager(application)
     private val database by lazy { NotiFyDatabase.getInstance(application) }
+    private val followedArtistsRepository by lazy { FollowedArtistsRepository(application) }
 
     private val _uiState = MutableStateFlow(PlaylistLibraryUiState())
     val uiState: StateFlow<PlaylistLibraryUiState> = _uiState.asStateFlow()
 
     init {
+        viewModelScope.launch(ioDispatcher) {
+            repository.ensureLikedSongsPlaylist()
+        }
         observePlaylists()
         observeDownloads()
+        observeArtists()
+    }
+
+    private fun observeArtists() {
+        followedArtistsRepository.followedArtists
+            .onEach { artists ->
+                _uiState.update { it.copy(followedArtists = artists) }
+            }
+            .launchIn(viewModelScope)
     }
 
     private fun observePlaylists() {
@@ -86,12 +114,14 @@ class PlaylistLibraryViewModel(
 
     private fun observeDownloads() {
         downloadManager.observeCompletedDownloads()
+            .distinctUntilChanged()
             .onEach { completedList ->
                 val trackIds = completedList.map { it.trackId }.distinct()
                 val trackMap = database.trackDao().getTracksByIds(trackIds).associateBy { it.id }
                 val items = completedList.mapNotNull { dl ->
+                    if (!downloadManager.isFileValid(dl.relativeStorageKey)) return@mapNotNull null
                     val track = trackMap[dl.trackId]
-                    val contentUri = downloadManager.getOfflinePlaybackUri(dl.trackId) ?: return@mapNotNull null
+                    val contentUri = downloadManager.getContentUri(dl.relativeStorageKey) ?: return@mapNotNull null
                     DownloadedTrackItem(
                         downloadId = dl.downloadId,
                         trackId = dl.trackId,
@@ -99,7 +129,8 @@ class PlaylistLibraryViewModel(
                         artist = track?.artist ?: "Unknown Artist",
                         album = track?.album,
                         durationMs = dl.durationMs ?: track?.durationMs ?: 0L,
-                        artworkUri = track?.artworkUrl ?: track?.artworkUri,
+                        artworkUri = com.notify.core.playback.LocalArtworkStore.getArtworkUri(dl.trackId, getApplication())?.toString()
+                            ?: (track?.artworkUrl ?: track?.artworkUri),
                         fileSizeBytes = dl.fileSizeBytes ?: 0L,
                         bucket = if (dl.bucket == "PINNED") DownloadBucket.PINNED else DownloadBucket.SMART_OFFLINE,
                         qualityProfile = dl.qualityProfile,
@@ -116,6 +147,14 @@ class PlaylistLibraryViewModel(
 
     fun setLibraryTab(tab: LibraryTab) {
         _uiState.update { it.copy(selectedTab = tab) }
+    }
+
+    fun setFilter(filter: LibraryFilter) {
+        _uiState.update { current ->
+            val nextFilter = if (current.selectedFilter == filter) LibraryFilter.ALL else filter
+            val nextTab = if (nextFilter == LibraryFilter.DOWNLOADS) LibraryTab.DOWNLOADS else LibraryTab.PLAYLISTS
+            current.copy(selectedFilter = nextFilter, selectedTab = nextTab)
+        }
     }
 
     fun deleteDownload(downloadId: String) {
@@ -156,6 +195,7 @@ class PlaylistLibraryViewModel(
         viewModelScope.launch(ioDispatcher) {
             repository.createPlaylist(trimmed)
             _uiState.update { it.copy(actionMessage = "Created playlist '$trimmed'") }
+            SnackbarManager.emit(SnackbarEvent.PlaylistCreated(trimmed))
         }
     }
 
@@ -183,27 +223,83 @@ class PlaylistLibraryViewModel(
             return
         }
 
+        // Show spinner immediately so user knows import is in progress
+        _uiState.update { it.copy(isImporting = true, importError = null) }
+
         viewModelScope.launch(ioDispatcher) {
             val result = spotifyScraper.scrapePlaylist(url)
             if (result.playlist != null && result.playlist.tracks.isNotEmpty()) {
                 val saved = repository.saveScrapedPlaylist(result.playlist, url)
                 // Trigger background artwork pre-enrichment immediately
                 com.notify.download.worker.ArtworkEnrichmentWorker.enqueue(getApplication(), saved.playlistId)
+                val successMsg = "Imported '${saved.title}' (${result.playlist.tracks.size} tracks)"
                 _uiState.update {
                     it.copy(
                         isImporting = false,
                         importError = null,
-                        actionMessage = "Imported '${saved.title}' (${result.playlist.tracks.size} tracks)"
+                        actionMessage = successMsg
                     )
                 }
+                SnackbarManager.emit(SnackbarEvent.ImportSucceeded(saved.title, result.playlist.tracks.size))
                 onComplete(true)
             } else {
                 val errorMsg = result.error ?: "Failed to extract playlist. Verify the playlist is public."
                 _uiState.update {
                     it.copy(isImporting = false, importError = errorMsg)
                 }
+                SnackbarManager.emit(SnackbarEvent.ImportFailed(errorMsg))
                 onComplete(false)
             }
+        }
+    }
+
+    fun importYouTubePlaylist(rawUrl: String, onComplete: (Boolean) -> Unit = {}) {
+        val playlistId = YouTubePlaylistExtractor.extractPlaylistId(rawUrl)
+        if (playlistId.isNullOrBlank()) {
+            val errorMsg = "Invalid YouTube playlist URL. Make sure it contains 'list='."
+            _uiState.update { it.copy(importError = errorMsg) }
+            viewModelScope.launch {
+                SnackbarManager.emit(SnackbarEvent.ImportFailed(errorMsg))
+            }
+            onComplete(false)
+            return
+        }
+
+        _uiState.update { it.copy(isImporting = true, importError = null) }
+
+        viewModelScope.launch(ioDispatcher) {
+            val result = YouTubePlaylistExtractor.extractPlaylist(getApplication(), playlistId)
+            result.fold(
+                onSuccess = { extracted ->
+                    val saved = repository.saveYouTubePlaylist(
+                        playlistTitle = extracted.title,
+                        youtubePlaylistId = extracted.id,
+                        tracks = extracted.tracks,
+                        artworkUrl = extracted.artworkUrl,
+                        sourceUrl = "https://www.youtube.com/playlist?list=${extracted.id}"
+                    )
+                    val count = extracted.tracks.size
+                    val successMsg = "Imported $count songs"
+                    _uiState.update {
+                        it.copy(
+                            isImporting = false,
+                            importError = null,
+                            actionMessage = successMsg
+                        )
+                    }
+                    SnackbarManager.emit(SnackbarEvent.Message(successMsg))
+                    SnackbarManager.emit(SnackbarEvent.ImportSucceeded(saved.title, count))
+                    onComplete(true)
+                },
+                onFailure = { err ->
+                    val errorMsg = err.message ?: "Failed to import YouTube playlist"
+                    _uiState.update {
+                        it.copy(isImporting = false, importError = errorMsg)
+                    }
+                    SnackbarManager.emit(SnackbarEvent.ImportFailed(errorMsg))
+                    onComplete(false)
+                }
+            )
         }
     }
 

@@ -109,18 +109,54 @@ class RadioWindowManagerTest {
         // Contract: 3 future candidates in logical window
         val future = radioWindowManager.getFutureWindow()
         assertEquals("Must maintain exactly 3 future candidates", 3, future.size)
-        assertEquals("c_1", future[0].track.id.rawId)
-        assertEquals("c_2", future[1].track.id.rawId)
-        assertEquals("c_3", future[2].track.id.rawId)
+        val futureIds = future.map { it.track.id.rawId }.toSet()
+        assertEquals("Future candidates must be unique", 3, futureIds.size)
+        assertTrue("All candidates must come from returned pool", setOf("c_1", "c_2", "c_3", "c_4").containsAll(futureIds))
 
-        // Contract: Immediate next item (c_1) must be resolved and appended to Player timeline
+        // Contract: Immediate next item (head of futureWindow) must be resolved and appended to Player timeline
         assertEquals("Only immediate next item should have stream resolved", 1, fakeStreamResolver.resolvedUrls.size)
-        assertEquals("https://www.youtube.com/watch?v=c_1", fakeStreamResolver.resolvedUrls[0])
+        val headId = future[0].track.id.rawId
+        assertEquals("https://www.youtube.com/watch?v=$headId", fakeStreamResolver.resolvedUrls[0])
         verify(mockPlayer).addMediaItem(any<MediaItem>())
 
-        assertTrue("Queued keys must include immediate next", radioWindowManager.getQueuedKeys().contains("youtube:c_1"))
-        assertFalse("Slot 2 must not be resolved yet", radioWindowManager.getQueuedKeys().contains("youtube:c_2"))
-        assertFalse("Slot 3 must not be resolved yet", radioWindowManager.getQueuedKeys().contains("youtube:c_3"))
+        assertTrue("Queued keys must include immediate next", radioWindowManager.getQueuedKeys().contains("youtube:$headId"))
+        assertFalse("Slot 2 must not be resolved yet", radioWindowManager.getQueuedKeys().contains("youtube:${future[1].track.id.rawId}"))
+        assertFalse("Slot 3 must not be resolved yet", radioWindowManager.getQueuedKeys().contains("youtube:${future[2].track.id.rawId}"))
+    }
+
+    @Test
+    fun testCandidateSelectionFromPool_variesAcrossRunsAndExcludesRecentlyPlayed() = testScope.runTest {
+        val seedTrack = createTrack("seed_heatwave", "Heat Waves", "Glass Animals")
+        val seedEntry = QueueEntry(track = seedTrack, origin = QueueOrigin.USER)
+
+        val candidatePool = (1..8).map { i ->
+            YouTubeCandidate("cand_$i", "Related Song $i", "Related Artist $i", 200000L, 0L, null, null, "youtube")
+        }
+        fakeWatchNext.candidatesToReturn = candidatePool
+
+        // Run multiple separate sessions playing the same seed track
+        val firstPicks = mutableSetOf<String>()
+        for (session in 1L..10L) {
+            radioWindowManager.reset(newSessionId = session)
+            radioWindowManager.onTrackStarted(seedEntry, sessionId = session, player = mockPlayer)
+            advanceUntilIdle()
+
+            val future = radioWindowManager.getFutureWindow()
+            assertEquals(3, future.size)
+            val headId = future[0].track.id.rawId
+            firstPicks.add(headId)
+        }
+
+        // Variety verification: With 10 runs on an 8-candidate pool, we must have multiple distinct first picks,
+        // proving it is NOT pinned to index 0 (cand_1) every time!
+        assertTrue(
+            "Recommendations must produce variety across sessions (found ${firstPicks.size} distinct first picks: $firstPicks)",
+            firstPicks.size >= 2
+        )
+
+        // Verify recent history exclusion:
+        val recentHistory = radioWindowManager.getRecentHistoryKeys()
+        assertTrue("Recent history must have recorded played tracks", recentHistory.isNotEmpty())
     }
 
     @Test

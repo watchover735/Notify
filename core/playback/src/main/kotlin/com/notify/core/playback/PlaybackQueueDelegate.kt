@@ -3,7 +3,10 @@ package com.notify.core.playback
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.session.LibraryResult
+import androidx.media3.session.MediaLibraryService
 import androidx.media3.session.MediaSession
+import com.google.common.collect.ImmutableList
 import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.CoroutineScope
 
@@ -61,6 +64,67 @@ interface PlaybackQueueDelegate {
     fun onPlaybackResumption(
         mediaSession: MediaSession,
         controller: MediaSession.ControllerInfo
+    ): ListenableFuture<MediaSession.MediaItemsWithStartPosition>? = null
+
+    /**
+     * Updates shuffle mode on the queue coordinator.
+     */
+    fun setShuffleMode(mode: com.notify.core.model.ShuffleMode) {}
+
+    /**
+     * Toggles/cycles shuffle mode on the queue coordinator.
+     */
+    fun toggleShuffleMode(): Boolean = false
+
+    /**
+     * Handles MediaBrowser root request (Android Auto, etc.).
+     */
+    fun onGetLibraryRoot(
+        session: MediaSession,
+        browser: MediaSession.ControllerInfo,
+        params: MediaLibraryService.LibraryParams?
+    ): ListenableFuture<LibraryResult<MediaItem>>? = null
+
+    /**
+     * Handles MediaBrowser get children request for browsing content tree.
+     */
+    fun onGetChildren(
+        session: MediaSession,
+        browser: MediaSession.ControllerInfo,
+        parentId: String,
+        page: Int,
+        pageSize: Int,
+        params: MediaLibraryService.LibraryParams?
+    ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>>? = null
+
+    /**
+     * Handles MediaBrowser get item request.
+     */
+    fun onGetItem(
+        session: MediaSession,
+        browser: MediaSession.ControllerInfo,
+        mediaId: String
+    ): ListenableFuture<LibraryResult<MediaItem>>? = null
+
+    /**
+     * Handles MediaBrowser subscribe request.
+     */
+    fun onSubscribe(
+        session: MediaSession,
+        browser: MediaSession.ControllerInfo,
+        parentId: String,
+        params: MediaLibraryService.LibraryParams?
+    ): ListenableFuture<LibraryResult<Void>>? = null
+
+    /**
+     * Handles setMediaItems from media browser / external controllers.
+     */
+    fun onSetMediaItems(
+        mediaSession: MediaSession,
+        controller: MediaSession.ControllerInfo,
+        mediaItems: MutableList<MediaItem>,
+        startIndex: Int,
+        startPositionMs: Long
     ): ListenableFuture<MediaSession.MediaItemsWithStartPosition>? = null
 }
 
