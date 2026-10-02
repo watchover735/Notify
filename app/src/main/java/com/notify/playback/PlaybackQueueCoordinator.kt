@@ -218,7 +218,9 @@ class PlaybackQueueCoordinator(
         val isPreparingNext: Boolean = false,
         val isOffline: Boolean = false,
         /** True while stream URL is being resolved — drives MiniPlayer spinner. */
-        val isResolvingStream: Boolean = false
+        val isResolvingStream: Boolean = false,
+        /** Restored position in milliseconds from persistent snapshot prior to active playback. */
+        val restoredPositionMs: Long = 0L
     )
 
     private val _coordinatorState = MutableStateFlow(CoordinatorState())
@@ -226,6 +228,7 @@ class PlaybackQueueCoordinator(
 
     @Volatile
     private var isResumptionInProgress: Boolean = false
+    private var lastSnapshotPersistJob: Job? = null
 
     // ── Lifecycle Hooks ────────────────────────────────────────────────────────
 
@@ -291,6 +294,9 @@ class PlaybackQueueCoordinator(
 
     override fun detach() {
         Log.d(TAG, "Detached from NotiFyPlaybackService")
+        if (!isResumptionInProgress) {
+            persistSnapshot()
+        }
         progressCheckJob?.cancel()
         progressCheckJob = null
         prefetchJob?.cancel()
@@ -819,7 +825,11 @@ class PlaybackQueueCoordinator(
                 Log.d(TAG, "SIDE_EFFECTS_ALREADY_PROCESSED for $sideEffectKey")
             }
 
-            persistSnapshot()
+            if (!isResumptionInProgress) {
+                persistSnapshot()
+            } else {
+                Log.d(TAG, "onMediaItemTransition: persistSnapshot skipped during resumption")
+            }
 
             // Pre-emptively append next shuffled batch if near end of queue
             if (activeShuffleMode != ShuffleMode.OFF && originalPlaylistEntries.size > 1 && currentIndex + 2 >= queueDescriptors.size) {
@@ -857,6 +867,7 @@ class PlaybackQueueCoordinator(
         val scope = serviceScope ?: return
         progressCheckJob = scope.launch(Dispatchers.Main) {
             var hasPrefetchedAt70 = false
+            var lastSavedSecond = -1L
             while (isActive && targetSessionId == playbackSessionId) {
                 kotlinx.coroutines.delay(1000L)
                 val p = player ?: break
@@ -869,6 +880,14 @@ class PlaybackQueueCoordinator(
                         hasPrefetchedAt70 = true
                         Log.d(TAG, "Progress reached ${(progress * 100).toInt()}%; verifying next track prefetch")
                         triggerLookaheadReplenishment(targetSessionId)
+                    }
+                }
+                // Periodic snapshot position persistence (1s cadence, deduplicated)
+                if (position > 0L && !isResumptionInProgress) {
+                    val currentSec = position / 1000L
+                    if (currentSec != lastSavedSecond) {
+                        lastSavedSecond = currentSec
+                        persistSnapshot()
                     }
                 }
             }
@@ -894,6 +913,11 @@ class PlaybackQueueCoordinator(
             activeRequestId?.let { StartupMetricsLogger.onPlayerBuffering(it) }
         } else if (playbackState == Player.STATE_READY) {
             activeRequestId?.let { StartupMetricsLogger.onPlayerReady(it) }
+            if (isResumptionInProgress) {
+                Log.d(TAG, "STATE_READY: Resumption completed, resetting isResumptionInProgress")
+                isResumptionInProgress = false
+                _coordinatorState.update { it.copy(restoredPositionMs = 0L) }
+            }
         } else if (playbackState == Player.STATE_ENDED) {
             if (isABRepeatActive) {
                 Log.i(TAG, "TRACK_ENDED intercepted by active A-B repeat loop; looping back to $abRepeatStartMs")
@@ -1055,6 +1079,11 @@ class PlaybackQueueCoordinator(
     override fun onIsPlayingChanged(isPlaying: Boolean) {
         if (isPlaying) {
             activeRequestId?.let { StartupMetricsLogger.onPlaying(it) }
+        } else {
+            // When paused, immediately persist exact position
+            if (!isResumptionInProgress) {
+                persistSnapshot()
+            }
         }
     }
 
@@ -1088,6 +1117,10 @@ class PlaybackQueueCoordinator(
 
     override fun onPlayerError(error: PlaybackException) {
         Log.e(TAG, "onPlayerError from ExoPlayer: ${error.message}", error)
+        if (isResumptionInProgress) {
+            isResumptionInProgress = false
+            _coordinatorState.update { it.copy(restoredPositionMs = 0L) }
+        }
         val is403 = isHttp403(error)
         val isSourceError = isHttpSourceError(error)
         val currentEntry = queueDescriptors.getOrNull(currentIndex)
@@ -1800,9 +1833,14 @@ class PlaybackQueueCoordinator(
     // ── Snapshot & History ─────────────────────────────────────────────────────
 
     private fun persistSnapshot() {
+        if (isResumptionInProgress) {
+            Log.d(TAG, "persistSnapshot skipped: resumption in progress")
+            return
+        }
         val p = player
         if (p != null) {
             dispatchOnPlayerLooper { activePlayer ->
+                if (isResumptionInProgress) return@dispatchOnPlayerLooper
                 val pos = activePlayer.currentPosition.coerceAtLeast(0L)
                 val repMode = when (activePlayer.repeatMode) {
                     Player.REPEAT_MODE_ONE -> RepeatMode.ONE
@@ -1817,22 +1855,26 @@ class PlaybackQueueCoordinator(
                 val seed = radioSeedSourceId
 
                 val scope = serviceScope ?: CoroutineScope(ioDispatcher)
-                scope.launch(ioDispatcher) {
-                    val snapshot = PlaybackSnapshot(
-                        queue = currentDescriptors,
-                        currentIndex = currentIdx,
-                        currentPositionMs = pos,
-                        repeatMode = repMode,
-                        isShuffled = isShuffled,
-                        isAutoplayEnabled = autoplay,
-                        radioSeedSourceId = seed,
-                        shuffleMode = shuffleMode
-                    )
-                    snapshotStore.saveSnapshot(snapshot)
+                synchronized(this) {
+                    lastSnapshotPersistJob?.cancel()
+                    lastSnapshotPersistJob = scope.launch(ioDispatcher) {
+                        val snapshot = PlaybackSnapshot(
+                            queue = currentDescriptors,
+                            currentIndex = currentIdx,
+                            currentPositionMs = pos,
+                            repeatMode = repMode,
+                            isShuffled = isShuffled,
+                            isAutoplayEnabled = autoplay,
+                            radioSeedSourceId = seed,
+                            shuffleMode = shuffleMode
+                        )
+                        snapshotStore.saveSnapshot(snapshot)
+                    }
                 }
             }
         } else {
             val currentDescriptors = synchronized(queueDescriptors) { queueDescriptors.toList() }
+            if (currentDescriptors.isEmpty()) return
             val currentIdx = currentIndex
             val autoplay = isAutoplayEnabled
             val seed = radioSeedSourceId
@@ -1840,18 +1882,23 @@ class PlaybackQueueCoordinator(
             val shuffleMode = activeShuffleMode
 
             val scope = serviceScope ?: CoroutineScope(ioDispatcher)
-            scope.launch(ioDispatcher) {
-                val snapshot = PlaybackSnapshot(
-                    queue = currentDescriptors,
-                    currentIndex = currentIdx,
-                    currentPositionMs = 0L,
-                    repeatMode = RepeatMode.OFF,
-                    isShuffled = isShuffled,
-                    isAutoplayEnabled = autoplay,
-                    radioSeedSourceId = seed,
-                    shuffleMode = shuffleMode
-                )
-                snapshotStore.saveSnapshot(snapshot)
+            synchronized(this) {
+                lastSnapshotPersistJob?.cancel()
+                lastSnapshotPersistJob = scope.launch(ioDispatcher) {
+                    val existing = snapshotStore.loadSnapshot()
+                    val preservedPos = existing?.currentPositionMs ?: 0L
+                    val snapshot = PlaybackSnapshot(
+                        queue = currentDescriptors,
+                        currentIndex = currentIdx,
+                        currentPositionMs = preservedPos,
+                        repeatMode = RepeatMode.OFF,
+                        isShuffled = isShuffled,
+                        isAutoplayEnabled = autoplay,
+                        radioSeedSourceId = seed,
+                        shuffleMode = shuffleMode
+                    )
+                    snapshotStore.saveSnapshot(snapshot)
+                }
             }
         }
     }
@@ -1861,8 +1908,13 @@ class PlaybackQueueCoordinator(
         if (snapshot.queue.isEmpty()) return
 
         val targetIndex = snapshot.currentIndex.coerceIn(0, snapshot.queue.size - 1)
-        val targetPositionMs = snapshot.currentPositionMs.coerceAtLeast(0L)
+        val rawPositionMs = snapshot.currentPositionMs.coerceAtLeast(0L)
         val targetEntry = snapshot.queue.getOrNull(targetIndex)
+        var targetPositionMs = rawPositionMs
+        val trackDuration = targetEntry?.track?.durationMs ?: 0L
+        if (trackDuration > 0L && (targetPositionMs >= trackDuration - 5000L || targetPositionMs >= trackDuration)) {
+            targetPositionMs = 0L
+        }
 
         // Attempt pre-resolution of target item (offline or local)
         val resolvedTargetItem = if (targetEntry != null) {
@@ -1922,7 +1974,8 @@ class PlaybackQueueCoordinator(
                     currentTrack = snapshot.currentTrack,
                     isAutoplayEnabled = snapshot.isAutoplayEnabled,
                     shuffleMode = snapshot.shuffleMode,
-                    isOffline = !isNetworkConnected()
+                    isOffline = !isNetworkConnected(),
+                    restoredPositionMs = targetPositionMs
                 )
             }
 
@@ -2084,7 +2137,29 @@ class PlaybackQueueCoordinator(
                         }
 
                         val restoredItem = restoredMediaItems[finalTargetIndex]
-                        Log.i(TAG, "RESUMPTION_RESOLVED session=$startSessionId mediaId=${restoredItem.mediaId} timelineSize=${restoredMediaItems.size} startIndex=$finalTargetIndex posMs=$targetPositionMs track=\"${restoredEntry.track.title}\"")
+                        var effectivePositionMs = targetPositionMs
+                        val targetTrackDuration = restoredEntry.track.durationMs
+                        if (targetTrackDuration > 0L) {
+                            if (effectivePositionMs >= targetTrackDuration - 5000L || effectivePositionMs >= targetTrackDuration) {
+                                Log.i(TAG, "onPlaybackResumption: targetPositionMs=$effectivePositionMs is near or past track duration=$targetTrackDuration; starting from 0:00")
+                                effectivePositionMs = 0L
+                            }
+                        }
+
+                        // Check against re-resolved stream duration if available
+                        val resolvedStream = StreamUrlCache.get(initialKey)
+                        val resolvedStreamDuration = resolvedStream?.durationMs
+                        if (resolvedStreamDuration != null && resolvedStreamDuration > 0L) {
+                            if (targetTrackDuration > 0L && Math.abs(resolvedStreamDuration - targetTrackDuration) > 15000L) {
+                                Log.w(TAG, "onPlaybackResumption: resolved stream duration ($resolvedStreamDuration ms) deviates significantly from expected track duration ($targetTrackDuration ms); starting from 0:00")
+                                effectivePositionMs = 0L
+                            } else if (effectivePositionMs >= resolvedStreamDuration - 5000L || effectivePositionMs >= resolvedStreamDuration) {
+                                Log.i(TAG, "onPlaybackResumption: targetPositionMs=$effectivePositionMs is near or past resolved stream duration=$resolvedStreamDuration; starting from 0:00")
+                                effectivePositionMs = 0L
+                            }
+                        }
+
+                        Log.i(TAG, "RESUMPTION_RESOLVED session=$startSessionId mediaId=${restoredItem.mediaId} timelineSize=${restoredMediaItems.size} startIndex=$finalTargetIndex posMs=$effectivePositionMs track=\"${restoredEntry.track.title}\"")
 
                         // Re-arm RadioWindowManager for the resumed session
                         val activeP = player ?: p
@@ -2096,8 +2171,15 @@ class PlaybackQueueCoordinator(
                             }
                         }
 
-                        future.set(MediaSession.MediaItemsWithStartPosition(restoredMediaItems, finalTargetIndex, targetPositionMs))
-                        isResumptionInProgress = false
+                        future.set(MediaSession.MediaItemsWithStartPosition(restoredMediaItems, finalTargetIndex, effectivePositionMs))
+                        // Safety timeout to prevent permanently blocking snapshot saves if player never reaches STATE_READY
+                        scope.launch(mainDispatcher) {
+                            kotlinx.coroutines.delay(10000L)
+                            if (isResumptionInProgress) {
+                                Log.d(TAG, "Resumption timeout guard fired; clearing isResumptionInProgress")
+                                isResumptionInProgress = false
+                            }
+                        }
                     }
                 }
 

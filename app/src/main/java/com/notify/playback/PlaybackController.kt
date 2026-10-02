@@ -335,7 +335,11 @@ class PlaybackController(
             controller.duration
         }
 
-        val position = controller.currentPosition.coerceAtLeast(0L)
+        val position = if (controller.mediaItemCount == 0 && coordState.restoredPositionMs > 0L) {
+            coordState.restoredPositionMs
+        } else {
+            controller.currentPosition.coerceAtLeast(0L)
+        }
 
         val queue = (0 until controller.mediaItemCount).mapNotNull { index ->
             try {

@@ -694,4 +694,118 @@ class AutoNextGateB1Test {
         val recentsAfterTransition = db.searchHistoryDao().getRecentMediaItems(15)
         assertEquals("Side effects must be idempotent", 1, recentsAfterTransition.size)
     }
+
+    @Test
+    fun onPlaybackResumption_preservesSavedPositionMs() = testScope.runTest {
+        val coordinator = PlaybackQueueCoordinator(app, testDispatcher, testDispatcher, db)
+        val storage = com.notify.core.downloads.storage.OfflineStorage(app)
+        val relKey = com.notify.core.downloads.storage.OfflineStorage.buildRelativeKey(
+            com.notify.core.model.DownloadBucket.PINNED, "youtube", "resumed_vid_pos"
+        )
+        val audioFile = storage.resolveFile(relKey).apply {
+            parentFile?.mkdirs()
+            writeBytes(ByteArray(1024) { 1 })
+        }
+        val dl = com.notify.core.downloads.db.OfflineDownloadEntity(
+            downloadId = java.util.UUID.randomUUID().toString(),
+            trackId = "off_track_pos",
+            provider = "youtube",
+            providerSourceId = "resumed_vid_pos",
+            canonicalUrl = "https://www.youtube.com/watch?v=resumed_vid_pos",
+            relativeStorageKey = relKey,
+            bucket = "PINNED",
+            status = com.notify.core.downloads.db.OfflineDownloadStatus.COMPLETED,
+            fileSizeBytes = audioFile.length()
+        )
+        db.offlineDownloadDao().upsert(dl)
+
+        val offlineTrack = Track(
+            id = TrackId.youtube("off_track_pos"),
+            title = "Resumed Song Pos",
+            artist = "Artist Off",
+            durationMs = 240000L,
+            source = AudioSource.Offline(relKey, com.notify.core.model.DownloadBucket.PINNED)
+        )
+        val snapshotStore = PlaybackSnapshotStore(app)
+        snapshotStore.saveSnapshot(
+            PlaybackSnapshot(
+                queue = listOf(QueueEntry("q_pos", offlineTrack, QueueOrigin.PLAYLIST)),
+                currentIndex = 0,
+                currentPositionMs = 120000L, // 2 minutes in
+                repeatMode = RepeatMode.OFF,
+                isShuffled = false,
+                isAutoplayEnabled = true
+            )
+        )
+
+        val mockSession = org.mockito.Mockito.mock(androidx.media3.session.MediaSession::class.java)
+        val mockController = org.mockito.Mockito.mock(androidx.media3.session.MediaSession.ControllerInfo::class.java)
+
+        val future = coordinator.onPlaybackResumption(mockSession, mockController)
+        assertNotNull(future)
+        coordinator.lastResumptionJob?.join()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertTrue(future!!.isDone)
+        val result = future.get()
+        assertEquals(0, result.startIndex)
+        assertEquals(120000L, result.startPositionMs)
+    }
+
+    @Test
+    fun onPlaybackResumption_nearEndOfTrack_resetsPositionToZero() = testScope.runTest {
+        val coordinator = PlaybackQueueCoordinator(app, testDispatcher, testDispatcher, db)
+        val storage = com.notify.core.downloads.storage.OfflineStorage(app)
+        val relKey = com.notify.core.downloads.storage.OfflineStorage.buildRelativeKey(
+            com.notify.core.model.DownloadBucket.PINNED, "youtube", "resumed_vid_end"
+        )
+        val audioFile = storage.resolveFile(relKey).apply {
+            parentFile?.mkdirs()
+            writeBytes(ByteArray(1024) { 1 })
+        }
+        val dl = com.notify.core.downloads.db.OfflineDownloadEntity(
+            downloadId = java.util.UUID.randomUUID().toString(),
+            trackId = "off_track_end",
+            provider = "youtube",
+            providerSourceId = "resumed_vid_end",
+            canonicalUrl = "https://www.youtube.com/watch?v=resumed_vid_end",
+            relativeStorageKey = relKey,
+            bucket = "PINNED",
+            status = com.notify.core.downloads.db.OfflineDownloadStatus.COMPLETED,
+            fileSizeBytes = audioFile.length()
+        )
+        db.offlineDownloadDao().upsert(dl)
+
+        val offlineTrack = Track(
+            id = TrackId.youtube("off_track_end"),
+            title = "Resumed Song End",
+            artist = "Artist Off",
+            durationMs = 240000L,
+            source = AudioSource.Offline(relKey, com.notify.core.model.DownloadBucket.PINNED)
+        )
+        val snapshotStore = PlaybackSnapshotStore(app)
+        snapshotStore.saveSnapshot(
+            PlaybackSnapshot(
+                queue = listOf(QueueEntry("q_end", offlineTrack, QueueOrigin.PLAYLIST)),
+                currentIndex = 0,
+                currentPositionMs = 238000L, // only 2 seconds left
+                repeatMode = RepeatMode.OFF,
+                isShuffled = false,
+                isAutoplayEnabled = true
+            )
+        )
+
+        val mockSession = org.mockito.Mockito.mock(androidx.media3.session.MediaSession::class.java)
+        val mockController = org.mockito.Mockito.mock(androidx.media3.session.MediaSession.ControllerInfo::class.java)
+
+        val future = coordinator.onPlaybackResumption(mockSession, mockController)
+        assertNotNull(future)
+        coordinator.lastResumptionJob?.join()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertTrue(future!!.isDone)
+        val result = future.get()
+        assertEquals(0, result.startIndex)
+        assertEquals("Must reset to 0L when position is within 5s of track end", 0L, result.startPositionMs)
+    }
 }
