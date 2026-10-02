@@ -322,6 +322,7 @@ fun SearchScreen(
                             ) { _, item ->
                                 RecentSongRow(
                                     item = item,
+                                    isResolving = resolvingVideoId == item.providerSourceId,
                                     onPlay = {
                                         onlineSearchViewModel.playRecentMediaItem(item, onPlayStream)
                                     },
@@ -974,6 +975,7 @@ private fun SectionHeader(title: String, icon: androidx.compose.ui.graphics.vect
 @Composable
 private fun RecentSongRow(
     item: RecentSearchItemEntity,
+    isResolving: Boolean = false,
     onPlay: () -> Unit,
     onLike: () -> Unit = {},
     onDownload: () -> Unit = {},
@@ -986,7 +988,8 @@ private fun RecentSongRow(
         modifier = Modifier
             .fillMaxWidth()
             .testTag("recent_song_row_${item.id}")
-            .clickable(role = Role.Button) { onPlay() }
+            .alpha(if (isResolving) 0.7f else 1.0f)
+            .clickable(role = Role.Button, enabled = !isResolving) { onPlay() }
     ) {
         Row(
             modifier = Modifier
@@ -994,14 +997,34 @@ private fun RecentSongRow(
                 .padding(horizontal = 10.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            AlbumArtwork(
-                trackId = item.id,
-                artworkUri = item.artworkUrl,
-                contentDescription = item.title,
+            // Artwork with spinner overlay while resolving
+            Box(
                 modifier = Modifier.size(52.dp),
-                shape = RoundedCornerShape(6.dp),
-                targetSizePx = 128
-            )
+                contentAlignment = Alignment.Center
+            ) {
+                AlbumArtwork(
+                    trackId = item.id,
+                    artworkUri = item.artworkUrl,
+                    contentDescription = item.title,
+                    modifier = Modifier.fillMaxSize(),
+                    shape = RoundedCornerShape(6.dp),
+                    targetSizePx = 128
+                )
+                if (isResolving) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(6.dp)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator(
+                            color = EmeraldAccent,
+                            strokeWidth = 2.5.dp,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+            }
 
             Spacer(modifier = Modifier.width(12.dp))
 

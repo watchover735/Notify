@@ -12,6 +12,7 @@ object ArtworkResolution {
     private val DEEZER_PATTERN = Pattern.compile("https?://[^/]*(?:dzcdn\\.net|deezer\\.com)/.*")
     private val SOUNDCLOUD_PATTERN = Pattern.compile("https?://[^/]*sndcdn\\.com/.*")
     private val YOUTUBE_PATTERN = Pattern.compile("https?://(?:[^/]*ytimg\\.com|img\\.youtube\\.com|[^/]*youtube\\.com)/(?:vi|vi_webp)/([^/?#]+)/?.*")
+    private val GOOGLE_USERCONTENT_PATTERN = Pattern.compile("https?://[^/]*googleusercontent\\.com/.*")
 
     /**
      * Upgrades a given artwork URL to its best high-resolution version.
@@ -96,7 +97,14 @@ object ArtworkResolution {
             }
         }
 
-        // 5. Unknown host: return original URL unmodified
+        // 5. Google / YouTube Music: upgrade =wXX-hXX or =sXX params to =w544-h544
+        if (GOOGLE_USERCONTENT_PATTERN.matcher(url).matches()) {
+            val upgraded = url.replace(Regex("=w\\d+-h\\d+"), "=w544-h544")
+                .replace(Regex("=s\\d+"), "=s544")
+            return if (upgraded != url) listOf(upgraded, url) else listOf(url)
+        }
+
+        // 6. Unknown host: return original URL unmodified
         return listOf(url)
     }
 }

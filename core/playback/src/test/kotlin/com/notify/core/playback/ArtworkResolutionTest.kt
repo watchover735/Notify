@@ -84,6 +84,17 @@ class ArtworkResolutionTest {
     }
 
     @Test
+    fun googleusercontent_upgradesW60ToW544() {
+        val lowRes = "https://lh3.googleusercontent.com/some_hash=w60-h60-l90-rj"
+        val expected = "https://lh3.googleusercontent.com/some_hash=w544-h544-l90-rj"
+
+        assertEquals(expected, ArtworkResolution.highResArtwork(lowRes))
+        val candidates = ArtworkResolution.highResArtworkCandidates(lowRes)
+        assertEquals(expected, candidates[0])
+        assertEquals(lowRes, candidates[1])
+    }
+
+    @Test
     fun unknownHost_preservedUnchanged() {
         val customUrl = "https://example.com/custom/album/cover.png"
         assertEquals(customUrl, ArtworkResolution.highResArtwork(customUrl))

@@ -751,6 +751,7 @@ class OnlineSearchViewModel(
     }
 
     private var playCandidateJob: Job? = null
+    private var playRecentItemJob: Job? = null
 
     /**
      * Resolves the playable direct audio stream for a [candidate] using [streamResolver],
@@ -836,13 +837,26 @@ class OnlineSearchViewModel(
     /**
      * Directly plays a saved recent media item using its stable provider + providerSourceId,
      * bypassing title search and matching.
+     *
+     * Invariants:
+     * - Cancels any in-flight previous recent-item resolve before starting a new one.
+     * - Emits "Playing: <title>" snackbar immediately on tap (before network I/O).
+     * - Emits PlayFailed snackbar on resolve failure (mirrors playCandidate behavior).
+     * - _resolvingVideoId is always cleared in finally (success, failure, and cancellation).
      */
     fun playRecentMediaItem(
         item: RecentSearchItemEntity,
         onPlayStream: (Track, String, PlaybackOrigin) -> Unit
     ) {
-        viewModelScope.launch {
+        // Cancel any in-flight resolve from a previous tap before starting a new one
+        playRecentItemJob?.cancel()
+        playRecentItemJob = viewModelScope.launch {
             _resolvingVideoId.value = item.providerSourceId
+
+            // Immediate tap feedback: show snackbar before any network I/O
+            val displayTitle = item.title.takeIf { it.isNotBlank() } ?: "Song"
+            SnackbarManager.tryEmit(SnackbarEvent.Message("Playing: $displayTitle"))
+
             val requestId = "req_${System.currentTimeMillis()}_${item.providerSourceId}"
             StartupMetricsLogger.onPlayTap(requestId, item.providerSourceId, sessionId = 0L)
             StartupMetricsLogger.onResolveStart(requestId, item.providerSourceId, provider = item.provider)
@@ -886,6 +900,8 @@ class OnlineSearchViewModel(
                 )
                 if (streamResult.isFailure) {
                     val err = streamResult.exceptionOrNull()?.message ?: "Stream resolution failed"
+                    logE("Stream resolution failed for recent item ${item.providerSourceId}: $err")
+                    SnackbarManager.tryEmit(SnackbarEvent.PlayFailed)
                     _uiState.value = OnlineSearchUiState.Error("Stream resolution failed: $err")
                     return@launch
                 }
@@ -911,9 +927,14 @@ class OnlineSearchViewModel(
 
                 onPlayStream(domainTrack, resolvedStream.streamUrl, PlaybackOrigin.SEARCH_HISTORY_SELECTION)
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                logE("Failed to play recent media item: ${item.providerSourceId}", e)
+                SnackbarManager.tryEmit(SnackbarEvent.PlayFailed)
                 _uiState.value = OnlineSearchUiState.Error("Playback error: ${e.message}")
             } finally {
-                _resolvingVideoId.value = null
+                if (_resolvingVideoId.value == item.providerSourceId) {
+                    _resolvingVideoId.value = null
+                }
             }
         }
     }

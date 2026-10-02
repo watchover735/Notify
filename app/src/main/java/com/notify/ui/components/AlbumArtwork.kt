@@ -66,7 +66,11 @@ fun AlbumArtwork(
             com.notify.core.playback.LocalArtworkStore.getArtworkUri(id, context)?.toString()
         } else null
     }
-    val effectiveUri = localCachedUri ?: rawUri
+    // For large display contexts (NowPlaying / >= 512 px), prefer the remote URL so
+    // ArtworkResolution can upgrade it to the highest-resolution variant (maxresdefault, etc.).
+    // Small contexts (MiniPlayer, list rows) keep using the local cache for speed.
+    val preferRemote = targetSizePx >= 512 && rawUri?.startsWith("http") == true
+    val effectiveUri = if (preferRemote) rawUri else (localCachedUri ?: rawUri)
     val isRemote = track?.source is AudioSource.Remote && localCachedUri == null
 
     Box(
