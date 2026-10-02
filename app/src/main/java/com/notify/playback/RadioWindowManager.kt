@@ -70,6 +70,7 @@ class RadioWindowManager(
         const val FALLBACK_SEARCH_BATCH_SIZE = 15
         const val TOP_CANDIDATE_POOL_SIZE = 6
         const val RECENT_HISTORY_MAX_SIZE = 15
+        const val MAX_PLAYED_KEYS_HISTORY = 50
         private const val PREFS_NAME = "notify_radio_recent_history"
         private const val KEY_RECENT_KEYS = "recent_played_keys"
     }
@@ -90,6 +91,13 @@ class RadioWindowManager(
     private val playedKeys = LinkedHashSet<String>()
     private val queuedKeys = LinkedHashSet<String>()
     private val inFlightKeys = HashSet<String>()
+
+    private fun trimPlayedKeysLocked() {
+        while (playedKeys.size > MAX_PLAYED_KEYS_HISTORY) {
+            val oldest = playedKeys.firstOrNull() ?: break
+            playedKeys.remove(oldest)
+        }
+    }
 
     // Cross-session / rolling recent history to prevent repeats of last ~15 songs
     private val recentHistoryKeys = ArrayDeque<String>()
@@ -170,9 +178,15 @@ class RadioWindowManager(
 
     /**
      * Signals that a track has begun playback in the given session.
-     * Updates currentTrackKey, adds to playedKeys immediately, and initiates window replenishment.
+     * Updates currentTrackKey, adds to playedKeys immediately, and initiates window replenishment
+     * if [shouldReplenish] is true.
      */
-    fun onTrackStarted(entry: QueueEntry, sessionId: Long, player: Player) {
+    fun onTrackStarted(
+        entry: QueueEntry,
+        sessionId: Long,
+        player: Player,
+        shouldReplenish: Boolean = true
+    ) {
         if (sessionId != activeSessionId) {
             resetBlocking(sessionId)
         }
@@ -183,12 +197,15 @@ class RadioWindowManager(
                 currentTrackKey = key
                 // Contract: Add current track to playedKeys immediately when confirmed playback starts
                 playedKeys.add(key)
+                trimPlayedKeysLocked()
                 recordRecentPlayed(key)
                 queuedKeys.remove(key)
                 inFlightKeys.remove(key)
             }
             logWindowState()
-            triggerReplenish(entry.track, sessionId, player)
+            if (shouldReplenish) {
+                triggerReplenish(entry.track, sessionId, player)
+            }
         }
     }
 
@@ -220,12 +237,14 @@ class RadioWindowManager(
                 if (completedEntry != null) {
                     val completedKey = CanonicalMediaKey.fromTrack(completedEntry.track)
                     playedKeys.add(completedKey)
+                    trimPlayedKeysLocked()
                     recordRecentPlayed(completedKey)
                     queuedKeys.remove(completedKey)
                 }
 
                 currentTrackKey = nextKey
                 playedKeys.add(nextKey)
+                trimPlayedKeysLocked()
                 recordRecentPlayed(nextKey)
                 queuedKeys.remove(nextKey)
                 inFlightKeys.remove(nextKey)
@@ -286,7 +305,7 @@ class RadioWindowManager(
             MAX_FUTURE_TRACKS - futureWindow.size
         }
 
-        if (neededCandidates > 0 && !seedVideoId.isNullOrBlank()) {
+        if (neededCandidates > 0) {
             val candidates = fetchCandidatesWithFallback(seedTrack, seedVideoId, sessionId)
             val filtered = filterAndSelectCandidates(candidates, neededCandidates)
 
@@ -326,33 +345,45 @@ class RadioWindowManager(
 
     private suspend fun fetchCandidatesWithFallback(
         seedTrack: Track,
-        seedVideoId: String,
+        seedVideoId: String?,
         sessionId: Long
     ): List<YouTubeCandidate> {
         val candidates = mutableListOf<YouTubeCandidate>()
 
-        // 1. Primary: InnerTube WatchNext
-        Log.d(TAG, "WATCH_NEXT request count=1 seed=$seedVideoId")
-        val startTime = System.currentTimeMillis()
-        var watchNextResult = watchNextProvider.getWatchNext(seedVideoId, limit = CANDIDATE_BATCH_SIZE)
+        // 1. Primary: InnerTube WatchNext if seedVideoId is available
+        if (!seedVideoId.isNullOrBlank()) {
+            Log.d(TAG, "WATCH_NEXT request count=1 seed=$seedVideoId")
+            val startTime = System.currentTimeMillis()
+            var watchNextResult = watchNextProvider.getWatchNext(seedVideoId, limit = CANDIDATE_BATCH_SIZE)
 
-        // Bounded retry: retry WatchNext only once on failure or empty
-        if (watchNextResult.isFailure || watchNextResult.getOrNull().isNullOrEmpty()) {
-            Log.w(TAG, "WatchNext primary returned 0 candidates. Retrying once...")
-            watchNextResult = watchNextProvider.getWatchNext(seedVideoId, limit = CANDIDATE_BATCH_SIZE)
+            // Bounded retry: retry WatchNext only once on failure or empty
+            if (watchNextResult.isFailure || watchNextResult.getOrNull().isNullOrEmpty()) {
+                Log.w(TAG, "WatchNext primary returned 0 candidates. Retrying once...")
+                watchNextResult = watchNextProvider.getWatchNext(seedVideoId, limit = CANDIDATE_BATCH_SIZE)
+            }
+
+            val watchNextList = watchNextResult.getOrNull().orEmpty()
+            val elapsed = System.currentTimeMillis() - startTime
+            Log.d(TAG, "WATCH_NEXT count=1 elapsed=${elapsed}ms result=${watchNextList.size} candidates")
+            candidates.addAll(watchNextList)
         }
 
-        val watchNextList = watchNextResult.getOrNull().orEmpty()
-        val elapsed = System.currentTimeMillis() - startTime
-        Log.d(TAG, "WATCH_NEXT count=1 elapsed=${elapsed}ms result=${watchNextList.size} candidates")
-        candidates.addAll(watchNextList)
+        // 2. Fallback: YouTube Music search by artist/title if candidates < 3 OR if unplayedCount < 3
+        val unplayedCount = windowMutex.withLock {
+            candidates.count { c ->
+                val k = CanonicalMediaKey.fromResolved("youtube", c.videoId)
+                !playedKeys.contains(k) && !recentHistoryKeys.contains(k) && !queuedKeys.contains(k) && k != currentTrackKey
+            }
+        }
 
-        // 2. Fallback: YouTube Music search by artist if candidates < 3
-        if (candidates.size < 3 && sessionId == activeSessionId) {
-            val fallbackQuery = if (seedTrack.artist.isNotBlank()) "${seedTrack.artist} songs" else seedTrack.title
-            Log.d(TAG, "WatchNext candidates low (${candidates.size}). Querying fallback search for: \"$fallbackQuery\"")
+        if ((candidates.size < 3 || unplayedCount < 3) && sessionId == activeSessionId) {
+            val fallbackQuery = listOf(seedTrack.artist, seedTrack.title)
+                .filter { it.isNotBlank() }
+                .joinToString(" ")
+                .ifBlank { "Top Songs" }
+            Log.d(TAG, "Unplayed candidates low ($unplayedCount). Querying fallback search for: \"$fallbackQuery\"")
             val fallbackResult = fallbackSearchProvider.search(fallbackQuery, limit = FALLBACK_SEARCH_BATCH_SIZE)
-            val fallbackList = fallbackResult.getOrNull().orEmpty().shuffled()
+            val fallbackList = fallbackResult.getOrNull().orEmpty().shuffled(random)
             for (c in fallbackList) {
                 if (candidates.none { it.videoId == c.videoId }) {
                     candidates.add(c)
@@ -389,6 +420,21 @@ class RadioWindowManager(
                 } else {
                     validCandidates.add(candidate)
                 }
+            }
+
+            if (validCandidates.isEmpty()) {
+                // If all candidates are filtered by playedKeys, relax deduplication:
+                // allow candidates not played in the most recent 15 tracks (recentHistoryKeys),
+                // not currently playing, not in flight, and not already queued.
+                val relaxedCandidates = candidates.filter { candidate ->
+                    val canonicalKey = CanonicalMediaKey.fromResolved("youtube", candidate.videoId)
+                    canonicalKey != currentTrackKey &&
+                        !queuedKeys.contains(canonicalKey) &&
+                        !inFlightKeys.contains(canonicalKey) &&
+                        !recentHistoryKeys.contains(canonicalKey) &&
+                        futureWindow.none { CanonicalMediaKey.fromTrack(it.track) == canonicalKey }
+                }
+                validCandidates.addAll(relaxedCandidates)
             }
 
             if (validCandidates.isEmpty()) {
@@ -491,7 +537,16 @@ class RadioWindowManager(
                 Log.w(TAG, "Stream resolution failed for immediate next: $nextKey ($err)")
                 windowMutex.withLock {
                     inFlightKeys.remove(nextKey)
+                    if (futureWindow.isNotEmpty() && CanonicalMediaKey.fromTrack(futureWindow.first().track) == nextKey) {
+                        futureWindow.removeFirst()
+                    }
                     resolutionState = NextResolutionState.Failed(sessionId, nextKey, err)
+                }
+                // Try next candidate if available in futureWindow
+                val hasMore = windowMutex.withLock { futureWindow.isNotEmpty() }
+                if (hasMore && sessionId == activeSessionId && scope.isActive) {
+                    Log.i(TAG, "Retrying immediate next resolution with remaining candidate in futureWindow")
+                    resolveAndAppendImmediateNext(sessionId, player)
                 }
                 return
             }

@@ -441,6 +441,67 @@ class RadioWindowManagerTest {
         assertTrue("RadioWindowManager playedKeys must contain all 21 keys", rwmPlayed.containsAll(uniqueKeys))
     }
 
+    @Test
+    fun downloadedSongWithoutVideoId_replenishesViaSearchFallback() = testScope.runTest {
+        // Track without videoId (e.g. downloaded local audio)
+        val localTrack = Track(
+            id = TrackId(ProviderId.LOCAL, "local_audio_123"),
+            title = "Offline Song",
+            artist = "Arijit Singh",
+            source = AudioSource.Local("content://media/external/audio/123")
+        )
+        val entry = QueueEntry(track = localTrack, origin = QueueOrigin.USER)
+
+        fakeFallbackSearch.candidatesToReturn = listOf(
+            YouTubeCandidate("fb_1", "Fallback Song 1", "Arijit Singh", 180000L, 0L, null, null, "youtube"),
+            YouTubeCandidate("fb_2", "Fallback Song 2", "Arijit Singh", 180000L, 0L, null, null, "youtube"),
+            YouTubeCandidate("fb_3", "Fallback Song 3", "Arijit Singh", 180000L, 0L, null, null, "youtube")
+        )
+
+        radioWindowManager.onTrackStarted(entry, sessionId = 2L, player = mockPlayer)
+        advanceUntilIdle()
+
+        val future = radioWindowManager.getFutureWindow()
+        assertEquals(3, future.size)
+        assertTrue(fakeFallbackSearch.callCount.get() > 0)
+        val futureIds = future.map { it.track.id.rawId }.toSet()
+        assertEquals(setOf("fb_1", "fb_2", "fb_3"), futureIds)
+    }
+
+    @Test
+    fun exhaustedWatchNext_replenishesViaSearchFallback() = testScope.runTest {
+        val playedTrack = createTrack("already_played_1", "Played 1")
+        val seedTrack = createTrack("seed_ex", "Exhaustion Seed")
+
+        // First start and mark playedTrack as played in session 3
+        radioWindowManager.onTrackStarted(QueueEntry(track = playedTrack, origin = QueueOrigin.USER), sessionId = 3L, player = mockPlayer)
+        advanceUntilIdle()
+
+        fakeWatchNext.candidatesToReturn = listOf(
+            YouTubeCandidate("already_played_1", "Played 1", "Artist", 180000L, 0L, null, null, "youtube")
+        )
+        fakeFallbackSearch.candidatesToReturn = listOf(
+            YouTubeCandidate("fresh_1", "Fresh 1", "Artist", 180000L, 0L, null, null, "youtube"),
+            YouTubeCandidate("fresh_2", "Fresh 2", "Artist", 180000L, 0L, null, null, "youtube"),
+            YouTubeCandidate("fresh_3", "Fresh 3", "Artist", 180000L, 0L, null, null, "youtube")
+        )
+
+        // Now transition to seedTrack
+        radioWindowManager.onTrackTransition(
+            completedEntry = QueueEntry(track = playedTrack, origin = QueueOrigin.USER),
+            nextEntry = QueueEntry(track = seedTrack, origin = QueueOrigin.USER),
+            sessionId = 3L,
+            player = mockPlayer
+        )
+        advanceUntilIdle()
+
+        val future = radioWindowManager.getFutureWindow()
+        assertEquals(3, future.size)
+        assertTrue("Fallback search must be called when WatchNext has only played items", fakeFallbackSearch.callCount.get() > 0)
+        val futureIds = future.map { it.track.id.rawId }.toSet()
+        assertEquals(setOf("fresh_1", "fresh_2", "fresh_3"), futureIds)
+    }
+
     // ── Fakes ───────────────────────────────────────────────────────────────
 
     class FakeWatchNextProvider : InnerTubeWatchNextProvider() {

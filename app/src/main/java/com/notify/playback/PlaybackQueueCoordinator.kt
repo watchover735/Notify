@@ -598,7 +598,8 @@ class PlaybackQueueCoordinator(
                     p.play()
                 }
                 Log.i(TAG, "PLAY_REQUEST session=$sessionId request=$activeRequestId mediaId=${resolvedItem.mediaId} timelineSize=${p.mediaItemCount}")
-                radioWindowManager.onTrackStarted(currentEntry, sessionId, p)
+                val isSingleTrack = queueDescriptors.size <= 1
+                radioWindowManager.onTrackStarted(currentEntry, sessionId, p, shouldReplenish = isSingleTrack)
             }
         }
 
@@ -831,6 +832,14 @@ class PlaybackQueueCoordinator(
                 _coordinatorState.update { it.copy(queue = queueDescriptors.toList()) }
                 if (activeShuffleMode == ShuffleMode.SMART_SHUFFLE) {
                     scheduleSmartShuffleRecommendations(playbackSessionId)
+                }
+            }
+
+            // Low-watermark refill: when upcoming remaining tracks are <= 2, trigger proactive radio refill
+            val upcomingTracks = (queueDescriptors.size - 1) - currentIndex
+            if (upcomingTracks <= 2 && isAutoplayEnabled && isNetworkConnected()) {
+                if (p != null) {
+                    radioWindowManager.triggerReplenish(matchedEntry.track, playbackSessionId, p)
                 }
             }
 
@@ -2076,6 +2085,16 @@ class PlaybackQueueCoordinator(
 
                         val restoredItem = restoredMediaItems[finalTargetIndex]
                         Log.i(TAG, "RESUMPTION_RESOLVED session=$startSessionId mediaId=${restoredItem.mediaId} timelineSize=${restoredMediaItems.size} startIndex=$finalTargetIndex posMs=$targetPositionMs track=\"${restoredEntry.track.title}\"")
+
+                        // Re-arm RadioWindowManager for the resumed session
+                        val activeP = player ?: p
+                        if (activeP != null) {
+                            radioWindowManager.onTrackStarted(restoredEntry, startSessionId, activeP, shouldReplenish = false)
+                            val remainingUpcoming = (fullQueue.size - 1) - fullQueueCurrentIndex
+                            if (remainingUpcoming <= 2 && snapshot.isAutoplayEnabled && isNetworkConnected()) {
+                                radioWindowManager.triggerReplenish(restoredEntry.track, startSessionId, activeP)
+                            }
+                        }
 
                         future.set(MediaSession.MediaItemsWithStartPosition(restoredMediaItems, finalTargetIndex, targetPositionMs))
                         isResumptionInProgress = false
