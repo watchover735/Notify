@@ -269,6 +269,8 @@ class ResolvedStreamProviderChain(
         // ── Stage c: Parallel Lightweight Provider Race (Max 2.8s) ────────────
         val winnerDeferred = CompletableDeferred<Pair<String, ResolvedStream>>()
         val safeLateWinner = CompletableDeferred<Pair<String, ResolvedStream>>()
+        var closestMismatchStream: Pair<String, ResolvedStream>? = null
+        var closestDeltaMs = Long.MAX_VALUE
 
         val raceJob = SupervisorJob()
         try {
@@ -284,13 +286,24 @@ class ResolvedStreamProviderChain(
                         val res = block()
                         if (res != null && res.isSuccess) {
                             val stream = res.getOrThrow()
-                            val isValid = validateDuration(name, stream, effectiveExpectedDurationMs)
+                            val isValid = validateDuration(name, stream, effectiveExpectedDurationMs, effectiveTitle)
                             if (isValid) {
                                 // Atomic completion: first winner succeeds, others return false
                                 if (winnerDeferred.complete(name to stream)) {
                                     safeLateWinner.complete(name to stream)
                                     val elapsed = System.currentTimeMillis() - raceStart
                                     logI("RACE_WINNER provider=$name videoId=$videoId elapsedMs=$elapsed format=${stream.formatId}")
+                                }
+                            } else {
+                                val streamDuration = stream.durationMs
+                                if (streamDuration != null && effectiveExpectedDurationMs != null && effectiveExpectedDurationMs > 0L) {
+                                    val delta = Math.abs(streamDuration - effectiveExpectedDurationMs)
+                                    synchronized(remainingJobs) {
+                                        if (delta < closestDeltaMs) {
+                                            closestDeltaMs = delta
+                                            closestMismatchStream = name to stream
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -398,6 +411,14 @@ class ResolvedStreamProviderChain(
                 }
 
                 val fallbackErr = fallbackResult.exceptionOrNull()?.message ?: "yt-dlp fallback error"
+                val rescue = synchronized(remainingJobs) { closestMismatchStream }
+                if (rescue != null) {
+                    val (rescueProvider, rescueStream) = rescue
+                    val enriched = if (rescueStream.videoId.isNullOrBlank()) rescueStream.copy(videoId = videoId) else rescueStream
+                    logW("ALL_RESOLVERS_FAILED videoId=$videoId, rescuing with closest available match from $rescueProvider (delta=${closestDeltaMs}ms)")
+                    StreamUrlCache.put(enriched)
+                    return Result.success(enriched)
+                }
                 logW("ALL_RESOLVERS_FAILED videoId=$videoId error=$fallbackErr")
                 return Result.failure(fallbackResult.exceptionOrNull() ?: IllegalStateException("All stream resolvers failed: $fallbackErr"))
             }
@@ -446,6 +467,14 @@ class ResolvedStreamProviderChain(
                             }
                         }
                         val fallbackErr = fallbackResult.exceptionOrNull()?.message ?: "yt-dlp fallback error"
+                        val rescue = synchronized(remainingJobs) { closestMismatchStream }
+                        if (rescue != null) {
+                            val (rescueProvider, rescueStream) = rescue
+                            val enriched = if (rescueStream.videoId.isNullOrBlank()) rescueStream.copy(videoId = videoId) else rescueStream
+                            logW("ALL_RESOLVERS_FAILED videoId=$videoId, rescuing with closest available match from $rescueProvider (delta=${closestDeltaMs}ms)")
+                            StreamUrlCache.put(enriched)
+                            return@onAwait Result.success(enriched)
+                        }
                         logW("ALL_RESOLVERS_FAILED videoId=$videoId error=$fallbackErr")
                         Result.failure(fallbackResult.exceptionOrNull() ?: IllegalStateException("All stream resolvers failed: $fallbackErr"))
                     }
@@ -462,8 +491,26 @@ class ResolvedStreamProviderChain(
     private fun validateDuration(
         providerName: String,
         stream: ResolvedStream,
-        expectedDurationMs: Long?
+        expectedDurationMs: Long?,
+        expectedTitle: String? = null
     ): Boolean {
+        // Title modifier check if expectedTitle and stream.title are available
+        val streamTitle = stream.title
+        if (!expectedTitle.isNullOrBlank() && !streamTitle.isNullOrBlank()) {
+            val expectedLower = expectedTitle.lowercase()
+            val streamLower = streamTitle.lowercase()
+            val modifierWords = listOf(
+                "slow", "slowed", "reverb", "lofi", "lo-fi",
+                "mashup", "remix", "sped up", "speed up", "live", "extended", "8d"
+            )
+            for (word in modifierWords) {
+                if (streamLower.contains(word) && !expectedLower.contains(word)) {
+                    logW("MODIFIER_MISMATCH_REJECTED provider=$providerName streamTitle=\"$streamTitle\" contains \"$word\" not in expected \"$expectedTitle\"")
+                    return false
+                }
+            }
+        }
+
         if (expectedDurationMs == null || expectedDurationMs <= 0L) {
             return true
         }
@@ -472,18 +519,19 @@ class ResolvedStreamProviderChain(
             return true
         }
 
-        // A track is considered a duration mismatch if it is > 15-20% shorter than expected
+        // A track is considered a duration mismatch if it is > 20% shorter or longer than expected
         // Minimum absolute tolerance threshold of 15 seconds to avoid rejecting minor tempo/silence differences
         val toleranceMs = maxOf(15_000L, (expectedDurationMs * 0.20).toLong())
         val minAllowedMs = expectedDurationMs - toleranceMs
+        val maxAllowedMs = expectedDurationMs + toleranceMs
 
         // Also check if stream is an obvious preview/snippet (e.g. <= 35s when expected > 60s)
         val isSnippet = expectedDurationMs > 60_000L && streamDuration <= 35_000L
 
-        if (streamDuration < minAllowedMs || isSnippet) {
+        if (streamDuration < minAllowedMs || streamDuration > maxAllowedMs || isSnippet) {
             val expSec = expectedDurationMs / 1000L
             val gotSec = streamDuration / 1000L
-            logW("DURATION_MISMATCH_REJECTED provider=$providerName expected=${expSec}s got=${gotSec}s")
+            logW("DURATION_MISMATCH_REJECTED provider=$providerName expected=${expSec}s got=${gotSec}s (tolerance=${toleranceMs / 1000}s)")
             return false
         }
         return true

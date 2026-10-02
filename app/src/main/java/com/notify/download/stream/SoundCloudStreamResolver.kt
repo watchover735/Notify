@@ -94,9 +94,10 @@ class SoundCloudStreamResolver(
                 val durationMs = json.optLong("durationMs", 0L).takeIf { it > 0 }
                 val expiresAtEpochMs = json.optLong("expiresAtEpochMs", System.currentTimeMillis() + 1800000L)
                 val returnedVideoId = json.optString("videoId").takeIf { it.isNotBlank() } ?: videoId
+                val streamTitle = json.optString("title").takeIf { it.isNotBlank() }
 
                 val elapsed = System.currentTimeMillis() - start
-                Log.i(TAG, "SOUNDCLOUD_ATTEMPT_COMPLETE outcome=SUCCESS elapsedMs=$elapsed format=$formatId durationMs=$durationMs")
+                Log.i(TAG, "SOUNDCLOUD_ATTEMPT_COMPLETE outcome=SUCCESS elapsedMs=$elapsed format=$formatId durationMs=$durationMs title=\"$streamTitle\"")
 
                 val resolvedStream = ResolvedStream(
                     streamUrl = streamUrl,
@@ -106,7 +107,8 @@ class SoundCloudStreamResolver(
                     bitrate = bitrate,
                     durationMs = durationMs,
                     expiresAtEpochMs = expiresAtEpochMs,
-                    videoId = returnedVideoId
+                    videoId = returnedVideoId,
+                    title = streamTitle
                 )
                 Result.success(resolvedStream)
             }

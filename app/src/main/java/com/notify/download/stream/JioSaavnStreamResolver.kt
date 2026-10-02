@@ -94,6 +94,7 @@ class JioSaavnStreamResolver(
                 val durationMs = json.optLong("durationMs", 0L).takeIf { it > 0 }
                 val expiresAtEpochMs = json.optLong("expiresAtEpochMs", System.currentTimeMillis() + 86400000L)
                 val returnedVideoId = json.optString("videoId").takeIf { it.isNotBlank() } ?: videoId
+                val streamTitle = json.optString("title").takeIf { it.isNotBlank() }
 
                 val fallbackArray = json.optJSONArray("fallbackUrls")
                 val fallbackUrls = mutableListOf<String>()
@@ -107,7 +108,7 @@ class JioSaavnStreamResolver(
                 }
 
                 val elapsed = System.currentTimeMillis() - start
-                Log.i(TAG, "JIOSAAVN_ATTEMPT_COMPLETE outcome=SUCCESS elapsedMs=$elapsed format=$formatId durationMs=$durationMs fallbackCount=${fallbackUrls.size}")
+                Log.i(TAG, "JIOSAAVN_ATTEMPT_COMPLETE outcome=SUCCESS elapsedMs=$elapsed format=$formatId durationMs=$durationMs fallbackCount=${fallbackUrls.size} title=\"$streamTitle\"")
 
                 val resolvedStream = ResolvedStream(
                     streamUrl = streamUrl,
@@ -118,7 +119,8 @@ class JioSaavnStreamResolver(
                     durationMs = durationMs,
                     expiresAtEpochMs = expiresAtEpochMs,
                     videoId = returnedVideoId,
-                    fallbackUrls = fallbackUrls
+                    fallbackUrls = fallbackUrls,
+                    title = streamTitle
                 )
                 Result.success(resolvedStream)
             }

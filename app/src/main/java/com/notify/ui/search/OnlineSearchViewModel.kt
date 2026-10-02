@@ -140,6 +140,11 @@ class OnlineSearchViewModel(
         private fun logE(msg: String, throwable: Throwable? = null) {
             try { Log.e(TAG, msg, throwable) } catch (_: Throwable) {}
         }
+
+        val MODIFIER_WORDS = listOf(
+            "slow", "slowed", "reverb", "lofi", "lo-fi",
+            "mashup", "remix", "sped up", "speed up", "live", "extended", "8d"
+        )
     }
 
     private val _uiState = MutableStateFlow<OnlineSearchUiState>(OnlineSearchUiState.Idle)
@@ -616,7 +621,7 @@ class OnlineSearchViewModel(
         val primaryCandidates = innerTubeResult?.getOrNull()
         if (innerTubeResult != null && innerTubeResult.isSuccess && !primaryCandidates.isNullOrEmpty()) {
             logD("InnerTube succeeded with ${primaryCandidates.size} candidates for \"$trimmed\"")
-            return primaryCandidates
+            return prioritizeCleanCandidates(trimmed, primaryCandidates)
         }
 
         // Phase 2: InnerTube failed → yt-dlp fallback
@@ -673,7 +678,29 @@ class OnlineSearchViewModel(
 
         val fallbackCandidates = fallbackResult.getOrThrow()
         logD("Fallback search request #$requestId succeeded with ${fallbackCandidates.size} candidates")
-        return fallbackCandidates
+        return prioritizeCleanCandidates(trimmed, fallbackCandidates)
+    }
+
+    private fun prioritizeCleanCandidates(query: String, candidates: List<YouTubeCandidate>): List<YouTubeCandidate> {
+        val queryLower = query.lowercase()
+        val activeQueryModifiers = MODIFIER_WORDS.filter { queryLower.contains(it) }
+
+        val cleanCandidates = mutableListOf<YouTubeCandidate>()
+        val modifiedCandidates = mutableListOf<YouTubeCandidate>()
+
+        for (candidate in candidates) {
+            val titleLower = candidate.title.lowercase()
+            val hasUnrequestedModifier = MODIFIER_WORDS.any { mod ->
+                titleLower.contains(mod) && !activeQueryModifiers.contains(mod)
+            }
+            if (hasUnrequestedModifier) {
+                modifiedCandidates.add(candidate)
+            } else {
+                cleanCandidates.add(candidate)
+            }
+        }
+
+        return cleanCandidates + modifiedCandidates
     }
 
     private fun persistCandidatesToRoom(normalizedKey: String, candidates: List<YouTubeCandidate>, nowMs: Long) {

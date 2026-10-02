@@ -21,7 +21,8 @@ data class ResolvedStream(
      * Empty for most providers; populated by JioSaavn resolver with [_160.mp4, _96.mp4] URLs.
      * Checked and retried transparently by PlaybackQueueCoordinator without user-visible error.
      */
-    val fallbackUrls: List<String> = emptyList()
+    val fallbackUrls: List<String> = emptyList(),
+    val title: String? = null
 ) {
     /** Alias for streamUrl for URI callers */
     val uri: String get() = streamUrl

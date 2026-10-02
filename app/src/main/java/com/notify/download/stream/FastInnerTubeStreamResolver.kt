@@ -193,6 +193,7 @@ open class FastInnerTubeStreamResolver(
         val elapsed = System.currentTimeMillis() - start
         val videoDetails = root.optJSONObject("videoDetails")
         val durationMs = videoDetails?.optString("lengthSeconds")?.toLongOrNull()?.let { it * 1000L }
+        val title = videoDetails?.optString("title")?.takeIf { it.isNotBlank() }
         Log.i(TAG, "FAST_INNERTUBE_ATTEMPT_COMPLETE outcome=SUCCESS videoId=$videoId elapsedMs=$elapsed format=${best.formatId} bitrate=${best.bitrate} durationMs=$durationMs")
 
         return Result.success(
@@ -206,7 +207,8 @@ open class FastInnerTubeStreamResolver(
                 container = best.container,
                 bitrate = best.bitrate,
                 contentLength = best.contentLength,
-                durationMs = durationMs
+                durationMs = durationMs,
+                title = title
             )
         )
     }

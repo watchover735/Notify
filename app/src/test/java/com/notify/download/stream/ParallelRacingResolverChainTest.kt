@@ -391,4 +391,198 @@ class ParallelRacingResolverChainTest {
         assertEquals("When lightweight providers only have short snippets, yt-dlp must be selected", "ytdlp_audio", winner.formatId)
         assertEquals("https://stream.example.com/ytdlp_full.m4a", winner.streamUrl)
     }
+
+    @Test
+    fun excessivelyLongMashup_isRejected_whenExpectedDurationIsNormal() = runTest {
+        // Expected duration is 3:56 (236_000ms), e.g. "Jeene Laga Hoon" original
+        // Fast racer finishes first at 50ms, but returns a 9:06 mashup (546_000ms)
+        val mashupResolver = object : AudioStreamResolver {
+            override suspend fun resolveStream(canonicalYoutubeUrl: String): Result<ResolvedStream> =
+                resolveStream(canonicalYoutubeUrl, null, null, false, null)
+
+            override suspend fun resolveStream(
+                canonicalYoutubeUrl: String,
+                title: String?,
+                artist: String?,
+                isPrefetch: Boolean,
+                expectedDurationMs: Long?
+            ): Result<ResolvedStream> {
+                delay(50L)
+                return Result.success(
+                    ResolvedStream(
+                        videoId = "jeeneVid",
+                        streamUrl = "https://stream.example.com/9min_mashup.m4a",
+                        formatId = "mashup_9min",
+                        durationMs = 546_000L,
+                        title = "Jeene Laga Hoon Mega Mashup"
+                    )
+                )
+            }
+        }
+
+        // yt-dlp / correct resolver returns the original 3:56 version (236_000ms)
+        val correctResolver = object : AudioStreamResolver {
+            override suspend fun resolveStream(canonicalYoutubeUrl: String): Result<ResolvedStream> =
+                resolveStream(canonicalYoutubeUrl, null, null, false, null)
+
+            override suspend fun resolveStream(
+                canonicalYoutubeUrl: String,
+                title: String?,
+                artist: String?,
+                isPrefetch: Boolean,
+                expectedDurationMs: Long?
+            ): Result<ResolvedStream> {
+                delay(200L)
+                return Result.success(
+                    ResolvedStream(
+                        videoId = "jeeneVid",
+                        streamUrl = "https://stream.example.com/original_356.m4a",
+                        formatId = "original_track",
+                        durationMs = 236_000L,
+                        title = "Jeene Laga Hoon"
+                    )
+                )
+            }
+        }
+
+        val chain = ResolvedStreamProviderChain(
+            context = context,
+            fallbackResolver = correctResolver,
+            customRacers = listOf("MashupRacer" to mashupResolver, "CorrectRacer" to correctResolver),
+            scope = this
+        )
+
+        val result = chain.resolveStream(
+            canonicalYoutubeUrl = "https://www.youtube.com/watch?v=jeeneVid",
+            title = "Jeene Laga Hoon",
+            artist = "Atif Aslam",
+            isPrefetch = false,
+            expectedDurationMs = 236_000L
+        )
+
+        assertTrue(result.isSuccess)
+        val winner = result.getOrThrow()
+        assertEquals("9-minute mashup must be rejected by upper duration validation; original 3:56 track must win", "original_track", winner.formatId)
+        assertEquals("https://stream.example.com/original_356.m4a", winner.streamUrl)
+        assertEquals(236_000L, winner.durationMs)
+    }
+
+    @Test
+    fun unrequestedTitleModifier_isRejected_whenExpectedTitleIsClean() = runTest {
+        // Query/expected title is clean "Jeene Laga Hoon" (236s)
+        // Racer finishes with matching duration but title contains "(Slowed + Reverb)"
+        val slowedReverbResolver = object : AudioStreamResolver {
+            override suspend fun resolveStream(canonicalYoutubeUrl: String): Result<ResolvedStream> =
+                resolveStream(canonicalYoutubeUrl, null, null, false, null)
+
+            override suspend fun resolveStream(
+                canonicalYoutubeUrl: String,
+                title: String?,
+                artist: String?,
+                isPrefetch: Boolean,
+                expectedDurationMs: Long?
+            ): Result<ResolvedStream> {
+                delay(50L)
+                return Result.success(
+                    ResolvedStream(
+                        videoId = "jeeneVid",
+                        streamUrl = "https://stream.example.com/slowed_reverb.m4a",
+                        formatId = "slowed_reverb_track",
+                        durationMs = 236_000L,
+                        title = "Jeene Laga Hoon (Slowed + Reverb)"
+                    )
+                )
+            }
+        }
+
+        // Fallback resolver returns the clean original track
+        val cleanResolver = object : AudioStreamResolver {
+            override suspend fun resolveStream(canonicalYoutubeUrl: String): Result<ResolvedStream> =
+                resolveStream(canonicalYoutubeUrl, null, null, false, null)
+
+            override suspend fun resolveStream(
+                canonicalYoutubeUrl: String,
+                title: String?,
+                artist: String?,
+                isPrefetch: Boolean,
+                expectedDurationMs: Long?
+            ): Result<ResolvedStream> {
+                delay(150L)
+                return Result.success(
+                    ResolvedStream(
+                        videoId = "jeeneVid",
+                        streamUrl = "https://stream.example.com/clean.m4a",
+                        formatId = "clean_track",
+                        durationMs = 236_000L,
+                        title = "Jeene Laga Hoon"
+                    )
+                )
+            }
+        }
+
+        val chain = ResolvedStreamProviderChain(
+            context = context,
+            fallbackResolver = cleanResolver,
+            customRacers = listOf("SlowedRacer" to slowedReverbResolver, "CleanRacer" to cleanResolver),
+            scope = this
+        )
+
+        val result = chain.resolveStream(
+            canonicalYoutubeUrl = "https://www.youtube.com/watch?v=jeeneVid",
+            title = "Jeene Laga Hoon",
+            artist = "Atif Aslam",
+            isPrefetch = false,
+            expectedDurationMs = 236_000L
+        )
+
+        assertTrue(result.isSuccess)
+        val winner = result.getOrThrow()
+        assertEquals("Unrequested slowed+reverb modifier must be rejected; clean track must win", "clean_track", winner.formatId)
+    }
+
+    @Test
+    fun requestedTitleModifier_isAccepted_whenExpectedTitleContainsModifier() = runTest {
+        // When user explicitly searches / requests a Remix version, e.g. "Jeene Laga Hoon Remix"
+        val remixResolver = object : AudioStreamResolver {
+            override suspend fun resolveStream(canonicalYoutubeUrl: String): Result<ResolvedStream> =
+                resolveStream(canonicalYoutubeUrl, null, null, false, null)
+
+            override suspend fun resolveStream(
+                canonicalYoutubeUrl: String,
+                title: String?,
+                artist: String?,
+                isPrefetch: Boolean,
+                expectedDurationMs: Long?
+            ): Result<ResolvedStream> {
+                delay(50L)
+                return Result.success(
+                    ResolvedStream(
+                        videoId = "jeeneRemixVid",
+                        streamUrl = "https://stream.example.com/remix.m4a",
+                        formatId = "remix_track",
+                        durationMs = 236_000L,
+                        title = "Jeene Laga Hoon (DJ Remix)"
+                    )
+                )
+            }
+        }
+
+        val chain = ResolvedStreamProviderChain(
+            context = context,
+            customRacers = listOf("RemixRacer" to remixResolver),
+            scope = this
+        )
+
+        val result = chain.resolveStream(
+            canonicalYoutubeUrl = "https://www.youtube.com/watch?v=jeeneRemixVid",
+            title = "Jeene Laga Hoon (DJ Remix)",
+            artist = "Atif Aslam",
+            isPrefetch = false,
+            expectedDurationMs = 236_000L
+        )
+
+        assertTrue(result.isSuccess)
+        val winner = result.getOrThrow()
+        assertEquals("Requested remix modifier must be accepted", "remix_track", winner.formatId)
+    }
 }
