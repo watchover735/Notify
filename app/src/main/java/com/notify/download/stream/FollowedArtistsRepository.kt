@@ -38,21 +38,31 @@ class FollowedArtistsRepository(context: Context) {
         private const val PREFS_NAME = "notify_followed_artists_prefs"
         private const val KEY_ARTISTS_JSON = "followed_artists_json"
         private const val KEY_INITIALIZED = "followed_artists_initialized"
+        /**
+         * Version token for artist image URL migration.
+         * Bump this when default imageUrls are updated so existing installations
+         * get their stale CDN paths silently patched on next launch.
+         */
+        private const val KEY_IMAGE_VERSION = "followed_artists_image_version"
+        private const val CURRENT_IMAGE_VERSION = 2
 
         /** Maximum number of artists a user can follow. */
         const val MAX_FOLLOWED_ARTISTS = 10
 
-        /** Default 5 seeded artists on first launch. */
+        /**
+         * Default 5 seeded artists on first launch.
+         * imageUrl values verified against JioSaavn CDN; update CURRENT_IMAGE_VERSION if changed.
+         */
         val DEFAULT_SEEDED_ARTISTS = listOf(
             FollowedArtist(
                 id = "485956",
                 name = "Yo Yo Honey Singh",
-                imageUrl = "https://c.saavncdn.com/artists/Yo_Yo_Honey_Singh_002_20221118070908_500x500.jpg"
+                imageUrl = "https://c.saavncdn.com/artists/Yo_Yo_Honey_Singh_004_20260811095253_500x500.jpg"
             ),
             FollowedArtist(
                 id = "468245",
                 name = "Diljit Dosanjh",
-                imageUrl = "https://c.saavncdn.com/artists/Diljit_Dosanjh_004_20221118070924_500x500.jpg"
+                imageUrl = "https://c.saavncdn.com/artists/Diljit_Dosanjh_005_20231025073054_500x500.jpg"
             ),
             FollowedArtist(
                 id = "459320",
@@ -62,14 +72,21 @@ class FollowedArtistsRepository(context: Context) {
             FollowedArtist(
                 id = "697691",
                 name = "Karan Aujla",
-                imageUrl = "https://c.saavncdn.com/artists/Karan_Aujla_004_20230628084503_500x500.jpg"
+                imageUrl = "https://c.saavncdn.com/artists/Karan_Aujla_005_20260925061936_500x500.jpg"
             ),
             FollowedArtist(
                 id = "681966",
                 name = "AP Dhillon",
-                imageUrl = "https://c.saavncdn.com/artists/AP_Dhillon_000_20221207074719_500x500.jpg"
+                imageUrl = "https://c.saavncdn.com/artists/AP_Dhillon_004_20251023102150_500x500.jpg"
             )
         )
+
+        /**
+         * Map of artistId -> fresh imageUrl for one-time CDN migration.
+         * Artists whose stored imageUrl is stale (404) get their URL silently replaced.
+         */
+        private val ARTIST_IMAGE_MIGRATIONS: Map<String, String> = DEFAULT_SEEDED_ARTISTS
+            .associate { it.id to it.imageUrl }
     }
 
     private val prefs by lazy {
@@ -88,16 +105,40 @@ class FollowedArtistsRepository(context: Context) {
         if (!isInitialized) {
             // First launch seed
             saveArtistsInternal(DEFAULT_SEEDED_ARTISTS)
-            prefs.edit().putBoolean(KEY_INITIALIZED, true).apply()
+            prefs.edit()
+                .putBoolean(KEY_INITIALIZED, true)
+                .putInt(KEY_IMAGE_VERSION, CURRENT_IMAGE_VERSION)
+                .apply()
             _followedArtists.value = DEFAULT_SEEDED_ARTISTS
             Log.i(TAG, "Seeded default ${DEFAULT_SEEDED_ARTISTS.size} followed artists")
         } else {
             val json = prefs.getString(KEY_ARTISTS_JSON, null)
-            val list = if (json.isNullOrBlank()) {
+            var list = if (json.isNullOrBlank()) {
                 emptyList()
             } else {
                 parseJson(json)
             }
+
+            // One-time migration: patch stale CDN imageUrls for known default artists
+            val storedVersion = prefs.getInt(KEY_IMAGE_VERSION, 1)
+            if (storedVersion < CURRENT_IMAGE_VERSION && list.isNotEmpty()) {
+                val patched = list.map { artist ->
+                    val freshUrl = ARTIST_IMAGE_MIGRATIONS[artist.id]
+                    if (freshUrl != null && artist.imageUrl != freshUrl) {
+                        Log.i(TAG, "Migrating imageUrl for artist '${artist.name}' (id=${artist.id})")
+                        artist.copy(imageUrl = freshUrl)
+                    } else {
+                        artist
+                    }
+                }
+                if (patched != list) {
+                    saveArtistsInternal(patched)
+                    list = patched
+                }
+                prefs.edit().putInt(KEY_IMAGE_VERSION, CURRENT_IMAGE_VERSION).apply()
+                Log.i(TAG, "Artist image migration v$storedVersion -> $CURRENT_IMAGE_VERSION complete")
+            }
+
             _followedArtists.value = list
             Log.d(TAG, "Loaded ${list.size} followed artists from storage")
         }
