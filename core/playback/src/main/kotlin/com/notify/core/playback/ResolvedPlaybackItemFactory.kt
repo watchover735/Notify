@@ -62,12 +62,29 @@ object ResolvedPlaybackItemFactory {
         }
 
         val localArtUri = LocalArtworkStore.getArtworkUri(track.id.rawId)
-        val highResArtUri = localArtUri?.toString() ?: ArtworkResolution.highResArtwork(track.artworkUri, targetPx = 800)
+        val remoteArt = track.artworkUri?.ifBlank { null }
+            ?: if (track.id.provider == com.notify.core.model.ProviderId.YOUTUBE && track.id.rawId.isNotBlank()) {
+                "https://i.ytimg.com/vi/${track.id.rawId}/hqdefault.jpg"
+            } else null
+        val bestRemote = remoteArt?.let { ArtworkResolution.highResArtwork(it, targetPx = 800) ?: it }
+
+        val finalArtUri = if (localArtUri != null) {
+            localArtUri
+        } else if (!bestRemote.isNullOrBlank()) {
+            Uri.parse(bestRemote)
+        } else {
+            null
+        }
+
+        if (localArtUri == null && !bestRemote.isNullOrBlank()) {
+            LocalArtworkStore.downloadAndCacheArtworkAsync(track.id.rawId, bestRemote)
+        }
+
         val metadata = MediaMetadata.Builder()
             .setTitle(track.title)
             .setArtist(track.artist)
             .setAlbumTitle(track.album)
-            .setArtworkUri(highResArtUri?.let { Uri.parse(it) })
+            .setArtworkUri(finalArtUri)
             .setExtras(extras)
             .build()
 

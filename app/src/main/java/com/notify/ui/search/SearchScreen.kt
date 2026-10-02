@@ -25,6 +25,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.ui.draw.alpha
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowForward
@@ -1102,6 +1103,7 @@ private fun OnlineCandidateRow(
         modifier = Modifier
             .fillMaxWidth()
             .testTag("online_candidate_row_${candidate.videoId}")
+            .alpha(if (isResolving) 0.7f else 1.0f)
             .clickable(role = Role.Button, enabled = !isResolving) { onPlay() }
     ) {
         Row(
@@ -1110,14 +1112,33 @@ private fun OnlineCandidateRow(
                 .padding(horizontal = 10.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            AlbumArtwork(
-                trackId = candidate.videoId,
-                artworkUri = candidate.artworkUrl,
-                contentDescription = candidate.title,
+            Box(
                 modifier = Modifier.size(42.dp),
-                shape = RoundedCornerShape(6.dp),
-                targetSizePx = 128
-            )
+                contentAlignment = Alignment.Center
+            ) {
+                AlbumArtwork(
+                    trackId = candidate.videoId,
+                    artworkUri = candidate.artworkUrl,
+                    contentDescription = candidate.title,
+                    modifier = Modifier.fillMaxSize(),
+                    shape = RoundedCornerShape(6.dp),
+                    targetSizePx = 128
+                )
+                if (isResolving) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(6.dp)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator(
+                            color = EmeraldAccent,
+                            strokeWidth = 2.5.dp,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+            }
 
             Spacer(modifier = Modifier.width(10.dp))
 

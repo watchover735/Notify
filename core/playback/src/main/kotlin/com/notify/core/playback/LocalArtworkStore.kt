@@ -5,13 +5,16 @@ import android.net.Uri
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Manages locally cached high-resolution album artwork for downloaded tracks.
@@ -23,6 +26,9 @@ object LocalArtworkStore {
 
     private const val TAG = "LocalArtworkStore"
     private const val ARTWORK_DIR = "notify_artwork"
+
+    private val downloadScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val inFlightDownloads = ConcurrentHashMap.newKeySet<String>()
 
     @Volatile
     private var appContext: Context? = null
@@ -83,6 +89,22 @@ object LocalArtworkStore {
         }
     }
 
+    fun downloadAndCacheArtworkAsync(
+        trackId: String,
+        remoteUrl: String?,
+        context: Context? = appContext,
+        targetPx: Int = 800
+    ) {
+        if (remoteUrl.isNullOrBlank() || hasArtwork(trackId, context)) return
+        downloadScope.launch {
+            try {
+                downloadAndCacheArtwork(trackId, remoteUrl, context, targetPx)
+            } catch (e: Exception) {
+                Log.w(TAG, "Async artwork download failed for $trackId: ${e.message}")
+            }
+        }
+    }
+
     /**
      * Downloads and caches the high-resolution artwork for the given track.
      * Thread-safe, non-blocking, atomic file write.
@@ -99,7 +121,16 @@ object LocalArtworkStore {
             return@withContext false
         }
 
-        val dir = getArtworkDirectory(context) ?: return@withContext false
+        if (!inFlightDownloads.add(trackId)) {
+            Log.d(TAG, "Artwork download already in flight for $trackId, skipping duplicate")
+            return@withContext false
+        }
+
+        val dir = getArtworkDirectory(context)
+        if (dir == null) {
+            inFlightDownloads.remove(trackId)
+            return@withContext false
+        }
         val targetFile = File(dir, "${sanitizeKey(trackId)}.jpg")
         val tempFile = File(dir, "${sanitizeKey(trackId)}.tmp")
 
@@ -118,11 +149,25 @@ object LocalArtworkStore {
                     }
                 }
                 if (tempFile.length() > 0L) {
-                    if (targetFile.exists()) targetFile.delete()
-                    val renamed = tempFile.renameTo(targetFile)
-                    if (!renamed) {
-                        tempFile.copyTo(targetFile, overwrite = true)
-                        tempFile.delete()
+                    try {
+                        Files.move(
+                            tempFile.toPath(),
+                            targetFile.toPath(),
+                            StandardCopyOption.REPLACE_EXISTING,
+                            StandardCopyOption.ATOMIC_MOVE
+                        )
+                    } catch (e: Exception) {
+                        try {
+                            Files.move(
+                                tempFile.toPath(),
+                                targetFile.toPath(),
+                                StandardCopyOption.REPLACE_EXISTING
+                            )
+                        } catch (e2: Exception) {
+                            Log.w(TAG, "Failed move for $trackId (${e2.message}), falling back to copy", e2)
+                            tempFile.copyTo(targetFile, overwrite = true)
+                            tempFile.delete()
+                        }
                     }
                     if (trackId.contains(":")) {
                         val rawId = trackId.substringAfterLast(":")
@@ -130,7 +175,9 @@ object LocalArtworkStore {
                             val aliasFile = File(dir, "${sanitizeKey(rawId)}.jpg")
                             try {
                                 targetFile.copyTo(aliasFile, overwrite = true)
-                            } catch (_: Exception) {}
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Failed copying alias artwork for $rawId: ${e.message}")
+                            }
                         }
                     }
                     Log.d(TAG, "Cached HD artwork for $trackId (${targetFile.length()} bytes)")
@@ -148,6 +195,8 @@ object LocalArtworkStore {
             Log.w(TAG, "Error downloading artwork for $trackId: ${e.message}")
             if (tempFile.exists()) tempFile.delete()
             return@withContext false
+        } finally {
+            inFlightDownloads.remove(trackId)
         }
     }
 }

@@ -419,7 +419,7 @@ class RadioWindowManager(
                     artist = candidate.channelTitle ?: "YouTube Music",
                     album = candidate.album,
                     durationMs = candidate.durationMs,
-                    artworkUri = candidate.artworkUrl,
+                    artworkUri = candidate.artworkUrl ?: "https://i.ytimg.com/vi/${candidate.videoId}/hqdefault.jpg",
                     source = AudioSource.Remote(ProviderId.YOUTUBE, candidate.videoId)
                 )
                 selected.add(
@@ -724,7 +724,7 @@ class RadioWindowManager(
                     artist = candidate.channelTitle ?: "YouTube Music",
                     album = candidate.album,
                     durationMs = candidate.durationMs,
-                    artworkUri = candidate.artworkUrl,
+                    artworkUri = candidate.artworkUrl ?: "https://i.ytimg.com/vi/${candidate.videoId}/hqdefault.jpg",
                     source = AudioSource.Remote(ProviderId.YOUTUBE, candidate.videoId)
                 )
                 QueueEntry(

@@ -365,12 +365,18 @@ class PlaybackController(
         } else {
             currentIndex
         }
-        val effectiveQueue = if (matchingQueueEntry != null && coordState.queue.isNotEmpty()) {
+        val effectiveQueue = if (coordState.queue.isNotEmpty()) {
             coordState.queue.map { it.track }
         } else {
             queue
         }
-        val effectiveQueueEntries = if (matchingQueueEntry != null) coordState.queue else emptyList()
+        val effectiveQueueEntries = if (coordState.queue.isNotEmpty()) {
+            coordState.queue
+        } else if (matchingQueueEntry != null) {
+            listOf(matchingQueueEntry)
+        } else {
+            emptyList()
+        }
 
         val isPlaying = controller.isPlaying
         val isBuffering = controller.playbackState == Player.STATE_BUFFERING

@@ -750,6 +750,8 @@ class OnlineSearchViewModel(
         }
     }
 
+    private var playCandidateJob: Job? = null
+
     /**
      * Resolves the playable direct audio stream for a [candidate] using [streamResolver],
      * then dispatches the domain track and stream URL to [onPlayStream].
@@ -759,7 +761,8 @@ class OnlineSearchViewModel(
         candidate: YouTubeCandidate,
         onPlayStream: (Track, String, PlaybackOrigin) -> Unit
     ) {
-        viewModelScope.launch {
+        playCandidateJob?.cancel()
+        playCandidateJob = viewModelScope.launch {
             _resolvingVideoId.value = candidate.videoId
             val requestId = "req_${System.currentTimeMillis()}_${candidate.videoId}"
             StartupMetricsLogger.onPlayTap(requestId, candidate.videoId, sessionId = 0L)
@@ -797,6 +800,7 @@ class OnlineSearchViewModel(
                 if (streamResult.isFailure) {
                     val err = streamResult.exceptionOrNull()?.message ?: "Stream resolution failed"
                     logE("Stream resolution failed for ${candidate.videoId}: $err")
+                    SnackbarManager.tryEmit(SnackbarEvent.PlayFailed)
                     _uiState.value = OnlineSearchUiState.Error("Stream resolution failed: $err")
                     return@launch
                 }
@@ -817,10 +821,14 @@ class OnlineSearchViewModel(
 
                 onPlayStream(domainTrack, resolvedStream.streamUrl, PlaybackOrigin.USER_SEARCH_SELECTION)
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 logE("Failed to resolve and play candidate: ${candidate.videoId}", e)
+                SnackbarManager.tryEmit(SnackbarEvent.PlayFailed)
                 _uiState.value = OnlineSearchUiState.Error("Playback error: ${e.message}")
             } finally {
-                _resolvingVideoId.value = null
+                if (_resolvingVideoId.value == candidate.videoId) {
+                    _resolvingVideoId.value = null
+                }
             }
         }
     }

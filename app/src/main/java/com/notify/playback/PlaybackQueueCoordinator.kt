@@ -108,6 +108,13 @@ class PlaybackQueueCoordinator(
             val coordinator = getInstance(context)
             PlaybackQueueDelegateRegistry.factory = PlaybackQueueDelegateFactory { coordinator }
         }
+
+        @androidx.annotation.VisibleForTesting
+        fun resetInstanceForTesting() {
+            synchronized(this) {
+                instance = null
+            }
+        }
     }
 
     private val downloadManager = OfflineDownloadManager(context)
@@ -445,6 +452,9 @@ class PlaybackQueueCoordinator(
             queueDescriptors.clear()
             queueDescriptors.add(entry)
             queueDescriptors.addAll(contextEntries)
+            originalPlaylistEntries.clear()
+            originalPlaylistEntries.add(entry)
+            originalPlaylistEntries.addAll(contextEntries)
             currentIndex = 0
             nextContiguousAppendIndex = 1
             lastTransitionedKey = canonicalKey
@@ -1948,68 +1958,77 @@ class PlaybackQueueCoordinator(
 
                 val targetIndex = snapshot.currentIndex.coerceIn(0, snapshot.queue.size - 1)
                 val targetPositionMs = snapshot.currentPositionMs.coerceAtLeast(0L)
-
-                // Restore valid offline content URIs first
-                val restoredEntries = mutableListOf<QueueEntry>()
-                val restoredMediaItems = mutableListOf<MediaItem>()
-
-                for (entry in snapshot.queue) {
-                    val track = entry.track
-                    // Priority 1: Check offline download
-                    val offlineUri = downloadManager.getOfflinePlaybackUri(track.id.rawId)
-                        ?: downloadManager.getOfflinePlaybackUriForSource(track.id.rawId)
-
-                    if (offlineUri != null) {
-                        val offlineTrack = track.copy(source = AudioSource.Local(offlineUri.toString()))
-                        val offlineKey = CanonicalMediaKey.fromTrack(offlineTrack)
-                        val item = MediaItemMapper.toMediaItem(
-                            track = offlineTrack,
-                            queueEntryId = entry.queueId,
-                            canonicalMediaKey = offlineKey,
-                            sessionId = startSessionId,
-                            sourceContext = "OFFLINE"
-                        )
-                        restoredEntries.add(entry.copy(track = offlineTrack))
-                        restoredMediaItems.add(item)
-                    } else if (track.source is AudioSource.Local) {
-                        // Priority 2: Local audio file availability
-                        val localUriString = (track.source as AudioSource.Local).contentUriString
-                        val checker = LocalAudioAvailabilityChecker(context.contentResolver)
-                        if (checker.checkAvailability(Uri.parse(localUriString)) is LocalAudioResult.Success) {
-                            val localKey = CanonicalMediaKey.fromTrack(track)
-                            val item = MediaItemMapper.toMediaItem(
-                                track = track,
-                                queueEntryId = entry.queueId,
-                                canonicalMediaKey = localKey,
-                                sessionId = startSessionId,
-                                sourceContext = "LOCAL"
-                            )
-                            restoredEntries.add(entry)
-                            restoredMediaItems.add(item)
-                        }
-                    }
-                }
-
-                // Priority 3: If no offline/local items were restored, attempt online resolution of target snapshot track
-                if (restoredMediaItems.isEmpty()) {
-                    val targetEntry = snapshot.queue.getOrNull(targetIndex)
-                    if (targetEntry != null && isNetworkConnected()) {
-                        val resolvedTarget = resolveDescriptor(targetEntry, startSessionId)
-                        if (resolvedTarget != null) {
-                            restoredEntries.add(targetEntry)
-                            restoredMediaItems.add(resolvedTarget)
-                        }
-                    }
-                }
-
-                if (restoredMediaItems.isEmpty()) {
-                    Log.d(TAG, "onPlaybackResumption: no playable items restored from snapshot")
+                val targetEntry = snapshot.queue.getOrNull(targetIndex)
+                if (targetEntry == null) {
+                    Log.w(TAG, "onPlaybackResumption: target entry at index $targetIndex is null")
                     isResumptionInProgress = false
-                    future.setException(NoSuchElementException("No playable items for resumption"))
+                    future.setException(NoSuchElementException("Target snapshot entry is null"))
                     return@launch
                 }
 
-                val finalTargetIndex = targetIndex.coerceIn(0, restoredMediaItems.size - 1)
+                Log.d(TAG, "onPlaybackResumption: snapshot targetIndex=$targetIndex, track=\"${targetEntry.track.title}\" (${targetEntry.track.id.rawId}), posMs=$targetPositionMs, queueSize=${snapshot.queue.size}")
+
+                val restoredEntries = mutableListOf<QueueEntry>()
+                val restoredMediaItems = mutableListOf<MediaItem>()
+                var resolvedTargetTimelineIndex = -1
+
+                for ((idx, entry) in snapshot.queue.withIndex()) {
+                    if (idx == targetIndex) {
+                        // The track that was actually playing when snapshot was saved
+                        val resolvedTarget = resolveDescriptor(entry, startSessionId)
+                        if (resolvedTarget != null) {
+                            resolvedTargetTimelineIndex = restoredMediaItems.size
+                            restoredEntries.add(entry)
+                            restoredMediaItems.add(resolvedTarget)
+                        } else {
+                            Log.w(TAG, "onPlaybackResumption: failed to resolve target playing track: ${entry.track.title}")
+                        }
+                    } else {
+                        // Other tracks in queue: restore if offline or local
+                        val track = entry.track
+                        val offlineUri = downloadManager.getOfflinePlaybackUri(track.id.rawId)
+                            ?: downloadManager.getOfflinePlaybackUriForSource(track.id.rawId)
+
+                        if (offlineUri != null) {
+                            val offlineTrack = track.copy(source = AudioSource.Local(offlineUri.toString()))
+                            val offlineKey = CanonicalMediaKey.fromTrack(offlineTrack)
+                            val item = MediaItemMapper.toMediaItem(
+                                track = offlineTrack,
+                                queueEntryId = entry.queueId,
+                                canonicalMediaKey = offlineKey,
+                                sessionId = startSessionId,
+                                sourceContext = "OFFLINE"
+                            )
+                            restoredEntries.add(entry.copy(track = offlineTrack))
+                            restoredMediaItems.add(item)
+                        } else if (track.source is AudioSource.Local) {
+                            val localUriString = (track.source as AudioSource.Local).contentUriString
+                            val checker = LocalAudioAvailabilityChecker(context.contentResolver)
+                            if (checker.checkAvailability(Uri.parse(localUriString)) is LocalAudioResult.Success) {
+                                val localKey = CanonicalMediaKey.fromTrack(track)
+                                val item = MediaItemMapper.toMediaItem(
+                                    track = track,
+                                    queueEntryId = entry.queueId,
+                                    canonicalMediaKey = localKey,
+                                    sessionId = startSessionId,
+                                    sourceContext = "LOCAL"
+                                )
+                                restoredEntries.add(entry)
+                                restoredMediaItems.add(item)
+                            }
+                        }
+                    }
+                }
+
+                // If target track failed to resolve, do NOT apply its positionMs to a different track!
+                if (resolvedTargetTimelineIndex < 0 || restoredMediaItems.isEmpty()) {
+                    Log.w(TAG, "onPlaybackResumption: target track could not be resolved; aborting resumption to avoid playing incorrect track")
+                    isResumptionInProgress = false
+                    future.setException(IllegalStateException("Target playing track failed to resolve"))
+                    return@launch
+                }
+
+                val finalTargetIndex = resolvedTargetTimelineIndex
 
                 val finishAction = {
                     val p = player
@@ -2025,11 +2044,16 @@ class PlaybackQueueCoordinator(
                         val restoredEntry = restoredEntries[finalTargetIndex]
                         val initialKey = CanonicalMediaKey.fromTrack(restoredEntry.track)
 
+                        val fullQueue = snapshot.queue.map { qEntry ->
+                            restoredEntries.firstOrNull { it.queueId == qEntry.queueId } ?: qEntry
+                        }
+                        val fullQueueCurrentIndex = fullQueue.indexOfFirst { it.queueId == restoredEntry.queueId }.coerceAtLeast(0)
+
                         synchronized(this@PlaybackQueueCoordinator) {
                             queueDescriptors.clear()
-                            queueDescriptors.addAll(restoredEntries)
-                            currentIndex = finalTargetIndex
-                            nextContiguousAppendIndex = finalTargetIndex + 1
+                            queueDescriptors.addAll(fullQueue)
+                            currentIndex = fullQueueCurrentIndex
+                            nextContiguousAppendIndex = fullQueueCurrentIndex + 1
                             isAutoplayEnabled = snapshot.isAutoplayEnabled
                             radioSeedSourceId = snapshot.radioSeedSourceId
                             lastTransitionedKey = initialKey
@@ -2040,8 +2064,8 @@ class PlaybackQueueCoordinator(
 
                         _coordinatorState.update {
                             it.copy(
-                                queue = restoredEntries,
-                                currentIndex = finalTargetIndex,
+                                queue = fullQueue,
+                                currentIndex = fullQueueCurrentIndex,
                                 currentTrack = restoredEntry.track,
                                 isAutoplayEnabled = snapshot.isAutoplayEnabled,
                                 message = null,
@@ -2051,7 +2075,7 @@ class PlaybackQueueCoordinator(
                         }
 
                         val restoredItem = restoredMediaItems[finalTargetIndex]
-                        Log.i(TAG, "RESUMPTION_RESOLVED session=$startSessionId mediaId=${restoredItem.mediaId} timelineSize=${restoredMediaItems.size} startIndex=$finalTargetIndex posMs=$targetPositionMs")
+                        Log.i(TAG, "RESUMPTION_RESOLVED session=$startSessionId mediaId=${restoredItem.mediaId} timelineSize=${restoredMediaItems.size} startIndex=$finalTargetIndex posMs=$targetPositionMs track=\"${restoredEntry.track.title}\"")
 
                         future.set(MediaSession.MediaItemsWithStartPosition(restoredMediaItems, finalTargetIndex, targetPositionMs))
                         isResumptionInProgress = false

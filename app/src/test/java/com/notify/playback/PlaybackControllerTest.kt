@@ -31,6 +31,7 @@ class PlaybackControllerTest {
 
     @Before
     fun setup() {
+        PlaybackQueueCoordinator.resetInstanceForTesting()
         app = RuntimeEnvironment.getApplication()
     }
 
