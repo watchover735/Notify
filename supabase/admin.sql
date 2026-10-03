@@ -10,17 +10,14 @@
 -- '23456789ABCDEFGHJKLMNPQRSTUVWXYZ' (no 0/O, 1/I/L).
 -- duration_days: NULL = permanent, 1 = 1 day, 7 = 7 days, etc.
 -- ============================================================================
+DROP FUNCTION IF EXISTS public.admin_generate_keys(INT, INT, TEXT);
+
 CREATE OR REPLACE FUNCTION public.admin_generate_keys(
     n INT,
     duration_days INT DEFAULT NULL,
     note TEXT DEFAULT NULL
 )
-RETURNS TABLE (
-    code TEXT,
-    duration_days INT,
-    note TEXT,
-    created_at TIMESTAMPTZ
-)
+RETURNS SETOF public.license_keys
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
@@ -34,6 +31,7 @@ DECLARE
     v_i INT;
     v_j INT;
     v_idx INT;
+    v_codes TEXT[] := ARRAY[]::TEXT[];
 BEGIN
     IF n <= 0 OR n > 1000 THEN
         RAISE EXCEPTION 'n must be between 1 and 1000';
@@ -64,6 +62,7 @@ BEGIN
             BEGIN
                 INSERT INTO public.license_keys (code, duration_days, note)
                 VALUES (v_code, admin_generate_keys.duration_days, admin_generate_keys.note);
+                v_codes := array_append(v_codes, v_code);
                 EXIT; -- Key generated and inserted, exit retry loop
             EXCEPTION WHEN unique_violation THEN
                 -- In rare random collision, loop again
@@ -73,11 +72,10 @@ BEGIN
     END LOOP;
 
     RETURN QUERY
-    SELECT k.code, k.duration_days, k.note, k.created_at
-    FROM public.license_keys k
-    WHERE k.note IS NOT DISTINCT FROM admin_generate_keys.note
-    ORDER BY k.created_at DESC
-    LIMIT n;
+    SELECT *
+    FROM public.license_keys
+    WHERE code = ANY(v_codes)
+    ORDER BY created_at DESC;
 END;
 $$;
 
