@@ -5,4 +5,10 @@
         <item name="android:navigationBarColor">@color/notify_background</item>
         <item name="android:windowBackground">@color/notify_background</item>
     </style>
+
+    <style name="Theme.NotiFy.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/notify_background</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_splash_logo</item>
+        <item name="postSplashScreenTheme">@style/Theme.NotiFy</item>
+    </style>
 </resources>

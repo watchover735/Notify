@@ -18,6 +18,8 @@ import com.notify.ui.theme.NotiFyTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+
 /**
  * Lean entry point Activity for NotiFy.
  * - Configures edge-to-edge system display.
@@ -48,6 +50,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        installSplashScreen()
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
