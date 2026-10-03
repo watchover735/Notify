@@ -304,7 +304,7 @@ class SupabaseProfileAndKeyRepository(
         return Result.failure(IOException("No active offline entitlement grace available"))
     }
 
-    private fun getCachedEntitlement(): EntitlementInfo? {
+    fun getCachedEntitlement(): EntitlementInfo? {
         val status = prefs.getString(KEY_STATUS, null) ?: return null
         val expiresAt = if (prefs.contains(KEY_EXPIRES_AT)) prefs.getLong(KEY_EXPIRES_AT, 0L).takeIf { it > 0L } else null
         val lastVerified = prefs.getLong(KEY_LAST_VERIFIED, System.currentTimeMillis())

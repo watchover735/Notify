@@ -20,14 +20,19 @@ import kotlinx.coroutines.launch
 
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 
+import com.notify.auth.AuthGate
+import com.notify.auth.AuthGateViewModel
+
 /**
  * Lean entry point Activity for NotiFy.
  * - Configures edge-to-edge system display.
  * - Initializes Activity-scoped shared ViewModels.
  * - Registers SAF and permission activity result launchers.
- * - Renders the root NotiFyApp within NotiFyTheme.
+ * - Enforces AuthGate access control before rendering NotiFyApp.
  */
 class MainActivity : ComponentActivity() {
+
+    private val authViewModel: AuthGateViewModel by viewModels()
 
     private val libraryViewModel: LocalLibraryViewModel by viewModels {
         LocalLibraryViewModel.provideFactory(this)
@@ -72,18 +77,29 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             NotiFyTheme {
-                NotiFyApp(
-                    libraryViewModel = libraryViewModel,
-                    playbackViewModel = playbackViewModel,
-                    onOpenSafPicker = {
-                        safPickerLauncher.launch(arrayOf("audio/*"))
-                    },
-                    onRequestPermission = {
-                        permissionLauncher.launch(libraryViewModel.requiredPermission())
-                    }
-                )
+                AuthGate(viewModel = authViewModel) {
+                    NotiFyApp(
+                        libraryViewModel = libraryViewModel,
+                        playbackViewModel = playbackViewModel,
+                        onOpenSafPicker = {
+                            safPickerLauncher.launch(arrayOf("audio/*"))
+                        },
+                        onRequestPermission = {
+                            permissionLauncher.launch(libraryViewModel.requiredPermission())
+                        }
+                    )
+                }
                 com.notify.updater.AppUpdateDialogHost()
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        authViewModel.onAppResume(
+            onRevokedOrExpired = {
+                playbackViewModel.pause()
+            }
+        )
     }
 }
