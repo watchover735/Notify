@@ -130,3 +130,88 @@ JOIN auth.users u ON k.redeemed_by = u.id
 LEFT JOIN public.profiles p ON p.id = u.id
 ORDER BY k.redeemed_at DESC;
 ```
+
+---
+
+## 5. Telegram Admin Bot Setup (Key Management Bot)
+
+Ye setup aapko Telegram se direct NotiFy access keys generate, revoke, extend aur monitor karne ki suvidha deta hai.
+
+### Step 1: SQL Setup chalao
+Supabase SQL Editor me jaao aur `supabase/telegram_admin_setup.sql` ka content run karo.
+- Ye `processed_updates` (idempotency table) create karega.
+- Ye `admin_log` (audit trail table) create karega.
+- Ye `pending_confirmations` (interactive confirmation table) create karega.
+- Ye `admin_get_user_info` aur `admin_get_stats` RPC functions create karega.
+
+### Step 2: Apna Numeric Telegram ID nikalo
+1. Telegram me search karo: **[@userinfobot](https://t.me/userinfobot)**
+2. `/start` bhejo.
+3. Bot aapko aapka numeric **Id** dega (e.g. `123456789`). Is number ko note kar lo.
+
+### Step 3: Telegram Bot banao (agar abhi nahi banaya)
+1. Telegram me search karo: **[@BotFather](https://t.me/BotFather)**
+2. `/newbot` bhejo aur prompt follow karke bot create karo.
+3. BotFather aapko **HTTP API Token** dega (e.g. `123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ`). Is token ko secure rakhein.
+
+### Step 4: Supabase Secrets configure karo
+Supabase CLI se (ya Supabase Dashboard -> **Project Settings** -> **Edge Functions** -> **Manage Secrets** me) ye 3 secrets set karein:
+
+```bash
+# Apne real values se replace karein (token aur secret kisi repo me commit mat karna):
+supabase secrets set TELEGRAM_BOT_TOKEN="<YOUR_TELEGRAM_BOT_TOKEN>"
+supabase secrets set ADMIN_TELEGRAM_ID="<YOUR_NUMERIC_ID>"
+supabase secrets set TELEGRAM_WEBHOOK_SECRET="<CHOOSE_A_RANDOM_SECRET_STRING_e.g._my_super_secret_token_123>"
+```
+
+### Step 5: Edge Function deploy karo
+> ⚠️ **IMPORTANT NOTE ON `--no-verify-jwt`:**
+> Telegram ke incoming webhook requests me Supabase user JWT nahi hota. Isliye function ko `--no-verify-jwt` ke sath deploy karna zaroori hai. Security gate function ke andar `X-Telegram-Bot-Api-Secret-Token` header aur sender ID comparison se 100% enforce hota hai.
+
+```bash
+supabase functions deploy telegram-admin --no-verify-jwt
+```
+
+### Step 6: Telegram Webhook set karo
+Telegram ko Supabase Edge Function ka webhook URL batane ke liye ye curl command chalayein:
+
+```bash
+curl -F "url=https://pnwoccbrpcihjhjmujfb.supabase.co/functions/v1/telegram-admin" \
+     -F "secret_token=<YOUR_RANDOM_SECRET_STRING>" \
+     https://api.telegram.org/bot<YOUR_TELEGRAM_BOT_TOKEN>/setWebhook
+```
+*(Response `{"ok":true,"result":true,"description":"Webhook was set"}` aana chahiye).*
+
+Webhook verify karne ke liye:
+```bash
+curl https://api.telegram.org/bot<YOUR_TELEGRAM_BOT_TOKEN>/getWebhookInfo
+```
+
+---
+
+## 6. Verification & Test Steps
+
+Deploy ke baad apne Telegram bot par ye tests karein:
+
+1. **Test `/help`:**
+   - Bot ko `/help` bhejo -> Saare available commands ka clean HTML formatting me list aana chahiye.
+
+2. **Test `/genkey 1 1d test`:**
+   - Command bhejo -> Ek 1-day access key formatted <code> block me aana chahiye jise mobile me tap karke copy kiya ja sake.
+
+3. **Test Security (Unauthorized Access):**
+   - Kisi doosre Telegram account se bot ko `/help` ya koi message bhejo.
+   - **Expected behavior:** Bot bilkul CHUP rahega (koi reply ya acknowledgement nahi aayega taaki unhe bot ka pata na chale).
+
+4. **Test Idempotency & Deduplication:**
+   - Same Telegram webhook payload dobara bhejne par function bina action execute kiye 200 return karega (`processed_updates` table update_id check karke dedupe karta hai).
+
+5. **Test Interactive Revoke Confirmation:**
+   - `/revoke <KEY>` bhejo -> Inline buttons ["✅ Haan, revoke karo", "❌ Cancel"] aayenge.
+   - Button 60 seconds tak valid rahega. 60 second baad click karne par "Confirmation expire ho chuki hai" ka error aayega.
+   - Double-tap karne par action sirf ek hi baar execute hoga.
+
+6. **Test `/stats` aur `/unused`:**
+   - `/stats` bhejo -> Total keys, unused, active users, expired aur revoked counts show honge.
+   - `/unused` bhejo -> Latest unused keys with duration label show honge.
+
