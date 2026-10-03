@@ -69,6 +69,8 @@ import com.notify.ui.theme.TextPrimary
 import com.notify.ui.theme.TextSecondary
 import com.notify.ui.theme.TextTertiary
 
+private const val TAG = "LoginScreen"
+
 @Composable
 fun LoginScreen(
     isLoading: Boolean,
@@ -78,11 +80,22 @@ fun LoginScreen(
     onEmailSignUp: (email: String, pass: String) -> Unit,
     onDismissError: () -> Unit = {}
 ) {
+    val isGoogleConfigured = remember {
+        com.notify.download.stream.SupabaseConfig.GOOGLE_WEB_CLIENT_ID.isNotBlank() &&
+            !com.notify.download.stream.SupabaseConfig.GOOGLE_WEB_CLIENT_ID.startsWith("YOUR_GOOGLE_WEB_CLIENT_ID", ignoreCase = true)
+    }
+
+    androidx.compose.runtime.LaunchedEffect(isGoogleConfigured) {
+        if (!isGoogleConfigured) {
+            android.util.Log.i(TAG, "Google Sign-In is disabled: GOOGLE_WEB_CLIENT_ID is a placeholder. Email login will be used.")
+        }
+    }
+
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var isPasswordVisible by remember { mutableStateOf(false) }
     var isSignUpMode by remember { mutableStateOf(false) }
-    var showEmailForm by remember { mutableStateOf(false) }
+    var showEmailForm by remember { mutableStateOf(!isGoogleConfigured) }
 
     val focusManager = LocalFocusManager.current
     val scrollState = rememberScrollState()
@@ -166,44 +179,46 @@ fun LoginScreen(
                 }
             }
 
-            // 1. "Continue with Google" Button
-            Button(
-                onClick = {
-                    onDismissError()
-                    onGoogleSignInClick()
-                },
-                enabled = !isLoading,
-                shape = CircleShape,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = Color.White,
-                    contentColor = Color.Black
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(50.dp)
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Center
+            // 1. "Continue with Google" Button (hidden if GOOGLE_WEB_CLIENT_ID is placeholder)
+            if (isGoogleConfigured) {
+                Button(
+                    onClick = {
+                        onDismissError()
+                        onGoogleSignInClick()
+                    },
+                    enabled = !isLoading,
+                    shape = CircleShape,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color.White,
+                        contentColor = Color.Black
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(50.dp)
                 ) {
-                    // Google "G" text badge
-                    Text(
-                        text = "G",
-                        color = Color(0xFF4285F4),
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Black
-                    )
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Text(
-                        text = "Continue with Google",
-                        color = Color.Black,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        // Google "G" text badge
+                        Text(
+                            text = "G",
+                            color = Color(0xFF4285F4),
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Black
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Text(
+                            text = "Continue with Google",
+                            color = Color.Black,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
-            }
 
-            Spacer(modifier = Modifier.height(14.dp))
+                Spacer(modifier = Modifier.height(14.dp))
+            }
 
             // 2. "Continue with Email" Button / Form Toggle
             if (!showEmailForm) {
@@ -216,9 +231,7 @@ fun LoginScreen(
                     colors = ButtonDefaults.outlinedButtonColors(
                         contentColor = TextPrimary
                     ),
-                    border = ButtonDefaults.outlinedButtonBorder.copy(
-                        brush = androidx.compose.ui.graphics.SolidColor(DarkSurfaceBorder)
-                    ),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, DarkSurfaceBorder),
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(50.dp)
