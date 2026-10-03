@@ -124,6 +124,15 @@ fun HomeScreen(
     val isSearchingArtists by homeViewModel.isSearchingArtists.collectAsStateWithLifecycle()
     var showEditArtistsSheet by remember { mutableStateOf(false) }
 
+    val context = LocalContext.current
+    val userProfilePrefs = remember { com.notify.core.preferences.UserProfilePreferences.getInstance(context) }
+    val userDisplayName by userProfilePrefs.displayNameFlow.collectAsStateWithLifecycle()
+    val nickname = remember(userDisplayName) {
+        userDisplayName.ifBlank {
+            com.notify.auth.SupabaseProfileAndKeyRepository(context).getCachedNickname() ?: ""
+        }
+    }
+
     val greeting = GreetingHelper.getGreeting()
     val allTracks = libraryState.allTracks
 
@@ -155,20 +164,23 @@ fun HomeScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth()
                 ) {
+                    val avatarInitial = remember(nickname) {
+                        nickname.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "N"
+                    }
                     Box(
                         modifier = Modifier
                             .size(38.dp)
                             .background(
                                 brush = Brush.linearGradient(listOf(EmeraldAccent, EmeraldLight)),
-                                shape = RoundedCornerShape(10.dp)
+                                shape = CircleShape
                             ),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.MusicNote,
-                            contentDescription = "NotiFy Logo",
-                            tint = Color.Black,
-                            modifier = Modifier.size(22.dp)
+                        Text(
+                            text = avatarInitial,
+                            color = Color.Black,
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold
                         )
                     }
                     Spacer(modifier = Modifier.width(12.dp))
@@ -180,7 +192,6 @@ fun HomeScreen(
                             fontWeight = FontWeight.Bold,
                             letterSpacing = 0.5.sp
                         )
-                        val context = LocalContext.current
                         val versionName = remember {
                             try {
                                 context.packageManager
@@ -188,8 +199,12 @@ fun HomeScreen(
                                     .versionName ?: ""
                             } catch (_: Exception) { "" }
                         }
+                        val subtitleText = remember(greeting, nickname, versionName) {
+                            val greetingPart = if (nickname.isNotBlank()) "$greeting, $nickname" else greeting
+                            if (versionName.isNotEmpty()) "$greetingPart · v$versionName" else greetingPart
+                        }
                         Text(
-                            text = if (versionName.isNotEmpty()) "$greeting · v$versionName" else greeting,
+                            text = subtitleText,
                             color = TextSecondary,
                             fontSize = 12.sp
                         )
