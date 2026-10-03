@@ -157,6 +157,7 @@ fun LibraryScreen(
     var searchQuery by remember { mutableStateOf("") }
     var currentSortOrder by remember { mutableStateOf(LibrarySortOrder.RECENTS) }
     var showSortMenu by remember { mutableStateOf(false) }
+    var showCreditSheet by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
     val userProfilePrefs = remember { UserProfilePreferences.getInstance(context) }
@@ -552,6 +553,9 @@ fun LibraryScreen(
                         )
                     }
                 }
+                item(key = "developer_credit_downloads") {
+                    DeveloperCreditRow(onClick = { showCreditSheet = true })
+                }
             }
             // Case B: Filter = ARTISTS
             else if (uiState.selectedFilter == LibraryFilter.ARTISTS) {
@@ -567,6 +571,9 @@ fun LibraryScreen(
                     items(filteredArtists, key = { it.id }) { artist ->
                         ArtistListRow(artist = artist)
                     }
+                }
+                item(key = "developer_credit_artists") {
+                    DeveloperCreditRow(onClick = { showCreditSheet = true })
                 }
             }
             // Case C: Filter = ALL or PLAYLISTS
@@ -608,8 +615,17 @@ fun LibraryScreen(
                         ArtistListRow(artist = artist)
                     }
                 }
+
+                item(key = "developer_credit_library") {
+                    DeveloperCreditRow(onClick = { showCreditSheet = true })
+                }
             }
         }
+    }
+
+    // Developer Contact Bottom Sheet
+    if (showCreditSheet) {
+        DeveloperCreditBottomSheet(onDismiss = { showCreditSheet = false })
     }
 
     // Dialog: Profile Settings
