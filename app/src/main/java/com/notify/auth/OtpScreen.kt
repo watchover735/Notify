@@ -199,7 +199,7 @@ fun OtpScreen(
                         }
                     }
                 },
-                placeholder = { Text("Enter 6-digit code", color = TextTertiary) },
+                placeholder = { Text("Enter code", color = TextTertiary) },
                 singleLine = true,
                 shape = RoundedCornerShape(14.dp),
                 colors = OutlinedTextFieldDefaults.colors(
