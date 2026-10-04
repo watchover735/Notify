@@ -79,6 +79,7 @@ fun LoginScreen(
     onGoogleSignInClick: () -> Unit,
     onEmailSignIn: (email: String, pass: String) -> Unit,
     onEmailSignUp: (email: String, pass: String) -> Unit,
+    onForgotPasswordClick: () -> Unit = {},
     onDismissError: () -> Unit = {}
 ) {
     val isGoogleConfigured = remember {
@@ -343,7 +344,27 @@ fun LoginScreen(
                         modifier = Modifier.fillMaxWidth()
                     )
 
-                    Spacer(modifier = Modifier.height(18.dp))
+                    if (!isSignUpMode) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 8.dp, bottom = 4.dp),
+                            contentAlignment = Alignment.CenterEnd
+                        ) {
+                            Text(
+                                text = "Forgot password?",
+                                color = EmeraldAccent,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.clickable {
+                                    onDismissError()
+                                    onForgotPasswordClick()
+                                }
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
 
                     // Submit Button
                     Button(

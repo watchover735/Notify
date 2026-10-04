@@ -22,6 +22,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -29,6 +32,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.notify.ui.components.ForgotPasswordDialog
 import com.notify.ui.theme.DarkBackground
 import com.notify.ui.theme.EmeraldAccent
 import com.notify.ui.theme.ErrorRed
@@ -84,15 +88,31 @@ fun AuthGate(
                 BackHandler {
                     // Prevent navigating to Home; stay on Login
                 }
+                var showForgotPasswordDialog by remember { mutableStateOf(false) }
                 val currentLoginState = gateState as? AuthGateState.NeedLogin
+                val cooldown by viewModel.resendCooldownSeconds.collectAsState()
+
                 LoginScreen(
                     isLoading = currentLoginState?.isLoading == true,
                     errorMessage = currentLoginState?.error,
                     onGoogleSignInClick = { viewModel.signInWithGoogle() },
                     onEmailSignIn = { email, pass -> viewModel.signInWithEmail(email, pass) },
                     onEmailSignUp = { email, pass -> viewModel.signUpWithEmail(email, pass) },
+                    onForgotPasswordClick = { showForgotPasswordDialog = true },
                     onDismissError = { viewModel.dismissError() }
                 )
+
+                if (showForgotPasswordDialog) {
+                    ForgotPasswordDialog(
+                        initialEmail = "",
+                        cooldownSeconds = cooldown,
+                        onDismiss = { showForgotPasswordDialog = false },
+                        onSendRecoveryEmail = { email -> viewModel.sendPasswordRecovery(email) },
+                        onResetPassword = { email, token, newPass, confPass ->
+                            viewModel.verifyRecoveryAndResetPassword(email, token, newPass, confPass)
+                        }
+                    )
+                }
             }
 
             AuthGateScreenKey.NeedEmailOtp -> {

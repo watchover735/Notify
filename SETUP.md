@@ -215,3 +215,21 @@ Deploy ke baad apne Telegram bot par ye tests karein:
    - `/stats` bhejo -> Total keys, unused, active users, expired aur revoked counts show honge.
    - `/unused` bhejo -> Latest unused keys with duration label show honge.
 
+---
+
+## 7. Password Recovery Email Template Setup (Supabase Dashboard)
+
+NotiFy mobile app me deep-link ke bina **direct in-app email OTP code** flow se Password Reset hota hai. Iske liye Supabase Dashboard me email template me `{{ .Token }}` variable hona anivarya hai:
+
+1. Supabase Dashboard me jao: **Authentication** -> **Email Templates**.
+2. **Reset Password** template select karo.
+3. Email body me verification code token mention karein:
+   ```html
+   <h2>Reset your password</h2>
+   <p>Your NotiFy recovery code is:</p>
+   <h3>{{ .Token }}</h3>
+   <p>Enter this code in the app along with your new password.</p>
+   ```
+4. **Save Changes** click karein.
+*(Note: Agar template me sirf link hoga aur `{{ .Token }}` nahi hoga, to user ko code nahi milega aur app me "Code nahi mila? Admin se contact karein" dikhega).*
+

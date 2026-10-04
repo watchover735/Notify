@@ -461,6 +461,78 @@ class SupabaseAuthRepository(
         }
 
     /**
+     * Sends password recovery email via POST /auth/v1/recover.
+     * Prevents email enumeration by returning success generically.
+     */
+    suspend fun sendPasswordRecovery(email: String): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            val url = "${SupabaseConfig.AUTH_URL}/recover"
+            val json = JSONObject().apply {
+                put("email", email.trim())
+            }
+
+            val request = Request.Builder()
+                .url(url)
+                .addHeader("apikey", SupabaseConfig.ANON_KEY)
+                .addHeader("Content-Type", "application/json")
+                .post(json.toString().toRequestBody(jsonMediaType))
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                val body = response.body?.string().orEmpty()
+                if (response.code == 429) {
+                    return@withContext Result.failure(Exception("Email limit reach ho gayi. Kripya baad me try karein"))
+                }
+                if (response.code in 500..599) {
+                    return@withContext Result.failure(Exception("Server error. Kripya baad me try karein"))
+                }
+                // Return success to prevent email enumeration
+                return@withContext Result.success(Unit)
+            }
+        } catch (e: java.net.SocketTimeoutException) {
+            return@withContext Result.failure(Exception("Server respond nahi kar raha. Dobara try karein"))
+        } catch (e: IOException) {
+            return@withContext Result.failure(Exception("Internet check karein aur dobara try karein"))
+        } catch (e: Exception) {
+            return@withContext Result.failure(e)
+        }
+    }
+
+    /**
+     * Verifies the password recovery OTP token against Supabase Auth using type=recovery.
+     * On success, parses and saves the returned session.
+     */
+    suspend fun verifyRecoveryOtp(email: String, token: String): VerifyOtpResult =
+        withContext(Dispatchers.IO) {
+            try {
+                val url = "${SupabaseConfig.AUTH_URL}/verify"
+                val json = JSONObject().apply {
+                    put("type", "recovery")
+                    put("email", email.trim())
+                    put("token", token.trim())
+                }
+
+                val request = Request.Builder()
+                    .url(url)
+                    .addHeader("apikey", SupabaseConfig.ANON_KEY)
+                    .addHeader("Content-Type", "application/json")
+                    .post(json.toString().toRequestBody(jsonMediaType))
+                    .build()
+
+                client.newCall(request).execute().use { response ->
+                    val body = response.body?.string().orEmpty()
+                    val result = parseVerifyResponse(response.code, body)
+                    if (result is VerifyOtpResult.Success) {
+                        saveSession(result.session, provider = "email")
+                    }
+                    result
+                }
+            } catch (e: Exception) {
+                mapOtpExceptionToVerifyResult(e)
+            }
+        }
+
+    /**
      * Sign in with Google ID Token obtained from Credential Manager.
      */
     suspend fun signInWithGoogleIdToken(idToken: String): Result<SupabaseAuthSession> =

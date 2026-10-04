@@ -713,4 +713,68 @@ class AuthGateViewModel(application: Application) : AndroidViewModel(application
             }
         }
     }
+
+    sealed interface ResetPasswordResult {
+        data object Success : ResetPasswordResult
+        data class Error(val message: String) : ResetPasswordResult
+    }
+
+    suspend fun sendPasswordRecovery(email: String): Result<Unit> {
+        val cleanEmail = email.trim()
+        if (cleanEmail.isBlank()) {
+            return Result.failure(Exception("Email enter karein"))
+        }
+        val res = authRepository.sendPasswordRecovery(cleanEmail)
+        if (res.isSuccess) {
+            startResendCooldown(60)
+        }
+        return res
+    }
+
+    suspend fun verifyRecoveryAndResetPassword(
+        email: String,
+        token: String,
+        newPass: String,
+        confirmPass: String
+    ): ResetPasswordResult {
+        if (token.trim().length < 6) {
+            return ResetPasswordResult.Error("Verification code enter karein")
+        }
+        if (newPass.length < 6) {
+            return ResetPasswordResult.Error("Password kam se kam 6 characters ka hona chahiye")
+        }
+        if (newPass != confirmPass) {
+            return ResetPasswordResult.Error("Naya password aur confirm password match nahi karte")
+        }
+
+        when (val verifyRes = authRepository.verifyRecoveryOtp(email, token)) {
+            is VerifyOtpResult.Success -> {
+                val updateRes = authRepository.updateUserPassword(newPass, verifyRes.session.accessToken)
+                return if (updateRes.isSuccess) {
+                    resolveProfileAndEntitlement(verifyRes.session)
+                    ResetPasswordResult.Success
+                } else {
+                    ResetPasswordResult.Error(updateRes.exceptionOrNull()?.message ?: "Password set nahi ho saka")
+                }
+            }
+            is VerifyOtpResult.OtpInvalidOrExpired -> {
+                return ResetPasswordResult.Error("Code galat ya expire ho gaya")
+            }
+            is VerifyOtpResult.RateLimited -> {
+                return ResetPasswordResult.Error("Email limit hit ho gayi. Kripya baad me try karein")
+            }
+            is VerifyOtpResult.Offline -> {
+                return ResetPasswordResult.Error("Internet check karein aur dobara try karein")
+            }
+            is VerifyOtpResult.Timeout -> {
+                return ResetPasswordResult.Error("Server respond nahi kar raha. Dobara try karein")
+            }
+            is VerifyOtpResult.Server5xx -> {
+                return ResetPasswordResult.Error("Server error (${verifyRes.code}). Kripya thodi der baad try karein")
+            }
+            is VerifyOtpResult.Unknown -> {
+                return ResetPasswordResult.Error(verifyRes.message)
+            }
+        }
+    }
 }
