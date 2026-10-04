@@ -35,6 +35,15 @@ import com.notify.ui.theme.ErrorRed
 import com.notify.ui.theme.TextPrimary
 import com.notify.ui.theme.TextSecondary
 
+private enum class AuthGateScreenKey {
+    Loading,
+    NeedLogin,
+    NeedNickname,
+    NeedKey,
+    Ready,
+    Error
+}
+
 @Composable
 fun AuthGate(
     viewModel: AuthGateViewModel,
@@ -42,9 +51,18 @@ fun AuthGate(
 ) {
     val gateState by viewModel.gateState.collectAsState()
 
-    Crossfade(targetState = gateState, label = "AuthGateTransition") { state ->
-        when (state) {
-            is AuthGateState.Loading -> {
+    val screenKey = when (gateState) {
+        is AuthGateState.Loading -> AuthGateScreenKey.Loading
+        is AuthGateState.NeedLogin -> AuthGateScreenKey.NeedLogin
+        is AuthGateState.NeedNickname -> AuthGateScreenKey.NeedNickname
+        is AuthGateState.NeedKey -> AuthGateScreenKey.NeedKey
+        is AuthGateState.Ready -> AuthGateScreenKey.Ready
+        is AuthGateState.Error -> AuthGateScreenKey.Error
+    }
+
+    Crossfade(targetState = screenKey, label = "AuthGateTransition") { targetScreen ->
+        when (targetScreen) {
+            AuthGateScreenKey.Loading -> {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -59,13 +77,14 @@ fun AuthGate(
                 }
             }
 
-            is AuthGateState.NeedLogin -> {
+            AuthGateScreenKey.NeedLogin -> {
                 BackHandler {
                     // Prevent navigating to Home; stay on Login
                 }
+                val currentLoginState = gateState as? AuthGateState.NeedLogin
                 LoginScreen(
-                    isLoading = state.isLoading,
-                    errorMessage = state.error,
+                    isLoading = currentLoginState?.isLoading == true,
+                    errorMessage = currentLoginState?.error,
                     onGoogleSignInClick = { viewModel.signInWithGoogle() },
                     onEmailSignIn = { email, pass -> viewModel.signInWithEmail(email, pass) },
                     onEmailSignUp = { email, pass -> viewModel.signUpWithEmail(email, pass) },
@@ -73,39 +92,42 @@ fun AuthGate(
                 )
             }
 
-            is AuthGateState.NeedNickname -> {
+            AuthGateScreenKey.NeedNickname -> {
                 BackHandler {
                     // Prevent navigating to Home; stay on Nickname
                 }
+                val currentNicknameState = gateState as? AuthGateState.NeedNickname
                 NicknameScreen(
-                    isLoading = state.isLoading,
-                    errorMessage = state.error,
+                    isLoading = currentNicknameState?.isLoading == true,
+                    errorMessage = currentNicknameState?.error,
                     onSaveNickname = { nickname -> viewModel.saveNickname(nickname) },
                     onDismissError = { viewModel.dismissError() }
                 )
             }
 
-            is AuthGateState.NeedKey -> {
+            AuthGateScreenKey.NeedKey -> {
                 BackHandler {
                     // Prevent navigating to Home; stay on Key entry
                 }
+                val currentKeyState = gateState as? AuthGateState.NeedKey
                 KeyEntryScreen(
-                    isLoading = state.isLoading,
-                    statusMessage = state.message,
-                    isError = state.isError,
+                    isLoading = currentKeyState?.isLoading == true,
+                    statusMessage = currentKeyState?.message,
+                    isError = currentKeyState?.isError == true,
                     onRedeemKey = { code -> viewModel.redeemKey(code) },
                     onDismissMessage = { viewModel.dismissError() }
                 )
             }
 
-            is AuthGateState.Ready -> {
+            AuthGateScreenKey.Ready -> {
                 content()
             }
 
-            is AuthGateState.Error -> {
+            AuthGateScreenKey.Error -> {
                 BackHandler {
                     // Prevent navigation
                 }
+                val currentErrorState = gateState as? AuthGateState.Error
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -132,14 +154,14 @@ fun AuthGate(
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = state.message,
+                            text = currentErrorState?.message.orEmpty(),
                             color = TextSecondary,
                             fontSize = 14.sp,
                             textAlign = TextAlign.Center
                         )
                         Spacer(modifier = Modifier.height(28.dp))
                         Button(
-                            onClick = state.onRetry,
+                            onClick = { currentErrorState?.onRetry?.invoke() },
                             shape = CircleShape,
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = EmeraldAccent,

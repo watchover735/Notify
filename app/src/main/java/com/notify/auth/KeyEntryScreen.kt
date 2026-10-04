@@ -38,6 +38,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -73,7 +74,7 @@ fun KeyEntryScreen(
     onRedeemKey: (String) -> Unit,
     onDismissMessage: () -> Unit = {}
 ) {
-    var keyInput by remember { mutableStateOf("") }
+    var keyInput by rememberSaveable { mutableStateOf("") }
     val focusManager = LocalFocusManager.current
     val context = LocalContext.current
 
