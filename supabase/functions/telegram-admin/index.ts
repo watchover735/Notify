@@ -3,7 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.8";
 
 // ── Environment & Secrets (Read exclusively from Deno.env) ───────────────────
 const BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN") || "";
-const ADMIN_TELEGRAM_ID = Deno.env.get("ADMIN_TELEGRAM_ID")?.trim() || "";
+const ADMIN_TELEGRAM_ID = (Deno.env.get("ADMIN_TELEGRAM_ID") || Deno.env.get("ADMIN_CHAT_ID"))?.trim() || "";
 const WEBHOOK_SECRET = Deno.env.get("TELEGRAM_WEBHOOK_SECRET") || "";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
