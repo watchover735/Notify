@@ -75,6 +75,13 @@ class MainActivity : ComponentActivity() {
         // Non-blocking in-app update check via GitHub Releases
         com.notify.updater.AppUpdater.checkForUpdates(this)
 
+        authViewModel.setPlaybackPauseAction {
+            playbackViewModel.pause()
+        }
+        authViewModel.setPlaybackActiveSupplier {
+            playbackViewModel.uiState.value.isPlaying
+        }
+
         setContent {
             NotiFyTheme {
                 AuthGate(viewModel = authViewModel) {
@@ -101,5 +108,10 @@ class MainActivity : ComponentActivity() {
                 playbackViewModel.pause()
             }
         )
+    }
+
+    override fun onPause() {
+        super.onPause()
+        authViewModel.onAppPause()
     }
 }

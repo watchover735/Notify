@@ -10,7 +10,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
 
 private const val TAG = "AuthGateViewModel"
 
@@ -49,6 +51,14 @@ class AuthGateViewModel(application: Application) : AndroidViewModel(application
 
     // Flag to prevent double-tap submissions
     private var isSubmitting = false
+
+    // Live expiry checks & playback coordinator
+    private var periodicCheckJob: Job? = null
+    private var exactTimeCheckJob: Job? = null
+    private val checkMutex = Mutex()
+    private var onPausePlayback: (() -> Unit)? = null
+    private var isPlaybackActiveSupplier: (() -> Boolean)? = null
+    private var isAppInForeground = true
 
     init {
         checkInitialAuthState()
@@ -119,6 +129,7 @@ class AuthGateViewModel(application: Application) : AndroidViewModel(application
             when (info.status) {
                 "active" -> {
                     _gateState.value = AuthGateState.Ready
+                    startLiveExpiryChecks(info.expiresAtEpochMs)
                 }
                 "expired" -> {
                     _gateState.value = AuthGateState.NeedKey(
@@ -145,6 +156,7 @@ class AuthGateViewModel(application: Application) : AndroidViewModel(application
             if (cached != null && cached.status == "active") {
                 // If offline cache still valid
                 _gateState.value = AuthGateState.Ready
+                startLiveExpiryChecks(cached.expiresAtEpochMs)
             } else {
                 _gateState.value = AuthGateState.Error(
                     message = "Access verify nahi ho saka. Internet check karein.",
@@ -154,36 +166,143 @@ class AuthGateViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    fun setPlaybackPauseAction(action: () -> Unit) {
+        this.onPausePlayback = action
+    }
+
+    fun setPlaybackActiveSupplier(supplier: () -> Boolean) {
+        this.isPlaybackActiveSupplier = supplier
+    }
+
+    private fun isPlaybackActive(): Boolean {
+        return try {
+            isPlaybackActiveSupplier?.invoke() == true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    fun startLiveExpiryChecks(expiresAtEpochMs: Long?) {
+        scheduleExactTimeCheck(expiresAtEpochMs)
+        startPeriodicCheck()
+    }
+
+    fun stopLiveExpiryChecks() {
+        exactTimeCheckJob?.cancel()
+        exactTimeCheckJob = null
+        periodicCheckJob?.cancel()
+        periodicCheckJob = null
+    }
+
+    private fun scheduleExactTimeCheck(expiresAtEpochMs: Long?) {
+        exactTimeCheckJob?.cancel()
+        exactTimeCheckJob = null
+        if (expiresAtEpochMs == null) return
+
+        val estimatedServerNow = profileAndKeyRepository.getEstimatedServerTimeMs()
+        val delayMs = expiresAtEpochMs - estimatedServerNow
+
+        exactTimeCheckJob = viewModelScope.launch {
+            if (delayMs > 0) {
+                delay(delayMs)
+            }
+            if (_gateState.value is AuthGateState.Ready) {
+                performEntitlementCheck(forceRefresh = true)
+            }
+        }
+    }
+
+    private fun startPeriodicCheck() {
+        if (periodicCheckJob?.isActive == true) return
+        periodicCheckJob = viewModelScope.launch {
+            while (isActive) {
+                delay(5 * 60 * 1000L) // 5 minutes
+                if (_gateState.value !is AuthGateState.Ready) break
+                val shouldCheck = isAppInForeground || isPlaybackActive()
+                if (shouldCheck) {
+                    performEntitlementCheck(forceRefresh = false)
+                }
+            }
+        }
+    }
+
+    suspend fun performEntitlementCheck(forceRefresh: Boolean) {
+        if (_gateState.value !is AuthGateState.Ready) return
+        if (!checkMutex.tryLock()) return // Prevent concurrent overlap
+
+        try {
+            val session = authRepository.getStoredSession() ?: return
+            val result = profileAndKeyRepository.checkEntitlement(session.accessToken, forceRefresh = forceRefresh)
+            if (result.isSuccess) {
+                val info = result.getOrThrow()
+                when (info.status) {
+                    "revoked" -> {
+                        Log.w(TAG, "Entitlement revoked, pausing playback and locking gate")
+                        onPausePlayback?.invoke()
+                        stopLiveExpiryChecks()
+                        _gateState.value = AuthGateState.NeedKey(
+                            message = "Key revoke kar di gayi. Admin se contact karo",
+                            isError = true
+                        )
+                    }
+                    "expired" -> {
+                        Log.w(TAG, "Entitlement expired, pausing playback and locking gate")
+                        onPausePlayback?.invoke()
+                        stopLiveExpiryChecks()
+                        _gateState.value = AuthGateState.NeedKey(
+                            message = "Key expire ho gayi",
+                            isError = true
+                        )
+                    }
+                    "active" -> {
+                        scheduleExactTimeCheck(info.expiresAtEpochMs)
+                    }
+                }
+            } else {
+                // Failure mode: Network error or timeout ko KABHI "expired" nahi maanna.
+                // UNLESS offline and monotonic estimated server time has exceeded cached expires_at:
+                val cached = profileAndKeyRepository.getCachedEntitlement()
+                if (cached != null && cached.expiresAtEpochMs != null) {
+                    val estimatedServerNow = profileAndKeyRepository.getEstimatedServerTimeMs()
+                    if (estimatedServerNow >= cached.expiresAtEpochMs) {
+                        Log.w(TAG, "Offline estimated server time exceeded expires_at, locking gate")
+                        onPausePlayback?.invoke()
+                        stopLiveExpiryChecks()
+                        _gateState.value = AuthGateState.NeedKey(
+                            message = "Key expire ho gayi",
+                            isError = true
+                        )
+                    }
+                }
+            }
+        } finally {
+            checkMutex.unlock()
+        }
+    }
+
     /**
      * Called on App RESUME. Max once per 15 minutes throttled inside repository.
      * onRevokedOrExpired callback allows pausing playback.
      */
-    fun onAppResume(onRevokedOrExpired: () -> Unit) {
+    fun onAppResume(onRevokedOrExpired: (() -> Unit)? = null) {
+        if (onRevokedOrExpired != null) {
+            this.onPausePlayback = onRevokedOrExpired
+        }
+        isAppInForeground = true
         if (_gateState.value !is AuthGateState.Ready) return
 
-        val session = authRepository.getStoredSession() ?: return
         viewModelScope.launch {
-            val result = profileAndKeyRepository.checkEntitlement(session.accessToken, forceRefresh = false)
-            if (result.isSuccess) {
-                val info = result.getOrThrow()
-                if (info.status == "revoked") {
-                    Log.w(TAG, "Entitlement revoked on resume, pausing playback and locking gate")
-                    onRevokedOrExpired()
-                    _gateState.value = AuthGateState.NeedKey(
-                        message = "Key revoke kar di gayi. Admin se contact karo",
-                        isError = true
-                    )
-                } else if (info.status == "expired") {
-                    Log.w(TAG, "Entitlement expired on resume, pausing playback and locking gate")
-                    onRevokedOrExpired()
-                    _gateState.value = AuthGateState.NeedKey(
-                        message = "Key expire ho gayi",
-                        isError = true
-                    )
-                }
-            }
-            // On network error: do NOTHING. Keep user in Ready state!
+            performEntitlementCheck(forceRefresh = false)
         }
+    }
+
+    fun onAppPause() {
+        isAppInForeground = false
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        stopLiveExpiryChecks()
     }
 
     fun signInWithEmail(email: String, pass: String) {
@@ -431,6 +550,7 @@ class AuthGateViewModel(application: Application) : AndroidViewModel(application
                         val status = entResult.getOrThrow().status
                         if (status == "active") {
                             _gateState.value = AuthGateState.Ready
+                            startLiveExpiryChecks(entResult.getOrThrow().expiresAtEpochMs)
                         } else {
                             _gateState.value = AuthGateState.NeedKey()
                         }
@@ -466,6 +586,7 @@ class AuthGateViewModel(application: Application) : AndroidViewModel(application
                     val redeem = res.getOrThrow()
                     if (redeem.code == "ok") {
                         _gateState.value = AuthGateState.Ready
+                        startLiveExpiryChecks(redeem.expiresAtEpochMs)
                     } else {
                         _gateState.value = AuthGateState.NeedKey(
                             message = redeem.message,

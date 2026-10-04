@@ -25,6 +25,7 @@ private const val KEY_STATUS = "cached_status"
 private const val KEY_EXPIRES_AT = "cached_expires_at"
 private const val KEY_LAST_VERIFIED = "cached_last_verified_at"
 private const val KEY_LAST_CHECK_TIME = "cached_last_check_epoch"
+private const val KEY_LAST_ELAPSED_REALTIME = "cached_last_elapsed_realtime"
 
 // 72 hours offline grace period in milliseconds
 const val OFFLINE_GRACE_PERIOD_MS = 72L * 60L * 60L * 1000L
@@ -40,7 +41,7 @@ data class EntitlementInfo(
 }
 
 data class RedeemResult(
-    val code: String, // 'ok', 'invalid', 'already_used', 'revoked', 'too_many_attempts'
+    val code: String, // 'ok', 'invalid', 'already_used', 'revoked', 'too_many_attempts', 'permanent_already'
     val message: String,
     val expiresAtEpochMs: Long?,
     val serverTimeEpochMs: Long?
@@ -286,33 +287,58 @@ class SupabaseProfileAndKeyRepository(
     /**
      * Evaluates offline grace rule:
      * If cached status is 'active' AND last_verified_at is within 72 hours
-     * AND (expires_at is null OR now < expires_at): active via grace.
+     * AND (expires_at is null OR estimatedServerNow < expires_at): active via grace.
+     * Monotonic server time estimate is used to prevent device clock spoofing.
      */
     private fun evaluateOfflineGraceFallback(): Result<EntitlementInfo> {
         val cached = getCachedEntitlement()
         if (cached != null) {
-            val now = System.currentTimeMillis()
+            val estimatedNow = getEstimatedServerTimeMs()
             val lastVerified = prefs.getLong(KEY_LAST_VERIFIED, 0L)
-            val isWithin72Hours = (now - lastVerified) <= OFFLINE_GRACE_PERIOD_MS
-            val isNotExpired = cached.expiresAtEpochMs == null || now < cached.expiresAtEpochMs
+            val isWithin72Hours = (estimatedNow - lastVerified) <= OFFLINE_GRACE_PERIOD_MS
+            val isNotExpired = cached.expiresAtEpochMs == null || estimatedNow < cached.expiresAtEpochMs
 
             if (cached.status == "active" && isWithin72Hours && isNotExpired) {
-                Log.i(TAG, "User active under offline grace period (${(now - lastVerified)/3600000}h since last verification)")
+                Log.i(TAG, "User active under offline grace period (${(estimatedNow - lastVerified)/3600000}h since last verification)")
                 return Result.success(cached.copy(isFromOfflineCache = true))
             }
         }
         return Result.failure(IOException("No active offline entitlement grace available"))
     }
 
+    private fun safeElapsedRealtime(): Long {
+        return try {
+            android.os.SystemClock.elapsedRealtime()
+        } catch (_: Throwable) {
+            System.currentTimeMillis()
+        }
+    }
+
+    /**
+     * Computes estimated server time using monotonic elapsedRealtime delta.
+     * Completely immune to user device clock manipulation.
+     */
+    fun getEstimatedServerTimeMs(): Long {
+        val lastServerTime = prefs.getLong(KEY_LAST_VERIFIED, 0L)
+        val lastElapsed = prefs.getLong(KEY_LAST_ELAPSED_REALTIME, 0L)
+        if (lastServerTime > 0L && lastElapsed > 0L) {
+            val elapsedDelta = safeElapsedRealtime() - lastElapsed
+            if (elapsedDelta >= 0) {
+                return lastServerTime + elapsedDelta
+            }
+        }
+        return System.currentTimeMillis()
+    }
+
     fun getCachedEntitlement(): EntitlementInfo? {
         val status = prefs.getString(KEY_STATUS, null) ?: return null
         val expiresAt = if (prefs.contains(KEY_EXPIRES_AT)) prefs.getLong(KEY_EXPIRES_AT, 0L).takeIf { it > 0L } else null
-        val lastVerified = prefs.getLong(KEY_LAST_VERIFIED, System.currentTimeMillis())
+        val estimatedServerTime = getEstimatedServerTimeMs()
 
         return EntitlementInfo(
             status = status,
             expiresAtEpochMs = expiresAt,
-            serverTimeEpochMs = lastVerified,
+            serverTimeEpochMs = estimatedServerTime,
             isFromOfflineCache = true
         )
     }
@@ -321,6 +347,7 @@ class SupabaseProfileAndKeyRepository(
         val editor = prefs.edit()
             .putString(KEY_STATUS, status)
             .putLong(KEY_LAST_VERIFIED, serverTimeMs)
+            .putLong(KEY_LAST_ELAPSED_REALTIME, safeElapsedRealtime())
 
         if (expiresAtMs != null) {
             editor.putLong(KEY_EXPIRES_AT, expiresAtMs)
