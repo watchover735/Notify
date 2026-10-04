@@ -666,4 +666,51 @@ class AuthGateViewModel(application: Application) : AndroidViewModel(application
         }
         return res
     }
+
+    sealed interface ChangePasswordResult {
+        data object Success : ChangePasswordResult
+        data class Error(val message: String) : ChangePasswordResult
+    }
+
+    suspend fun changePassword(
+        currentPass: String,
+        newPass: String,
+        confirmPass: String
+    ): ChangePasswordResult {
+        if (currentPass.isBlank()) {
+            return ChangePasswordResult.Error("Purana password enter karein")
+        }
+        if (newPass.length < 6) {
+            return ChangePasswordResult.Error("Password kam se kam 6 characters ka hona chahiye")
+        }
+        if (newPass != confirmPass) {
+            return ChangePasswordResult.Error("Naya password aur confirm password match nahi karte")
+        }
+        if (newPass == currentPass) {
+            return ChangePasswordResult.Error("Naya password purane password se alag hona chahiye")
+        }
+
+        val email = getStoredEmail()
+        if (email.isBlank()) {
+            return ChangePasswordResult.Error("User email nahi mila")
+        }
+
+        // Verify current password via re-sign-in
+        when (val loginRes = authRepository.signInWithEmail(email, currentPass)) {
+            is SignInResult.Success -> {
+                val updateRes = authRepository.updateUserPassword(newPass, loginRes.session.accessToken)
+                return if (updateRes.isSuccess) {
+                    ChangePasswordResult.Success
+                } else {
+                    ChangePasswordResult.Error(updateRes.exceptionOrNull()?.message ?: "Password badal nahi saka")
+                }
+            }
+            is SignInResult.Error -> {
+                return ChangePasswordResult.Error("Purana password galat hai")
+            }
+            is SignInResult.NeedOtp -> {
+                return ChangePasswordResult.Error("Email OTP verification pending hai")
+            }
+        }
+    }
 }

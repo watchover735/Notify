@@ -527,6 +527,43 @@ class SupabaseAuthRepository(
     }
 
     /**
+     * Updates user password via PUT /auth/v1/user using the authenticated access token.
+     * Password is never logged or stored.
+     */
+    suspend fun updateUserPassword(newPassword: String, accessToken: String): Result<Unit> =
+        withContext(Dispatchers.IO) {
+            try {
+                val url = "${SupabaseConfig.AUTH_URL}/user"
+                val json = JSONObject().apply {
+                    put("password", newPassword)
+                }
+
+                val request = Request.Builder()
+                    .url(url)
+                    .addHeader("apikey", SupabaseConfig.ANON_KEY)
+                    .addHeader("Authorization", "Bearer $accessToken")
+                    .addHeader("Content-Type", "application/json")
+                    .put(json.toString().toRequestBody(jsonMediaType))
+                    .build()
+
+                client.newCall(request).execute().use { response ->
+                    val body = response.body?.string().orEmpty()
+                    if (!response.isSuccessful) {
+                        val errMsg = parseErrorMessage(body, "Password badalne me error aaya")
+                        return@withContext Result.failure(Exception(errMsg))
+                    }
+                    return@withContext Result.success(Unit)
+                }
+            } catch (e: java.net.SocketTimeoutException) {
+                return@withContext Result.failure(Exception("Server respond nahi kar raha. Dobara try karein"))
+            } catch (e: IOException) {
+                return@withContext Result.failure(Exception("Internet check karein aur dobara try karein"))
+            } catch (e: Exception) {
+                return@withContext Result.failure(e)
+            }
+        }
+
+    /**
      * Signs out the current user, invalidating tokens locally and calling Supabase logout.
      */
     suspend fun signOut(accessToken: String?) = withContext(Dispatchers.IO) {

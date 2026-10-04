@@ -40,6 +40,7 @@ import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.rememberCoroutineScope
 import com.notify.auth.AuthGateViewModel
+import com.notify.ui.components.ChangePasswordDialog
 import com.notify.ui.components.ProfileDrawerSheet
 import com.notify.ui.components.UpdateKeyDialog
 import com.notify.ui.theme.DarkBackground
@@ -364,6 +365,17 @@ fun NotiFyApp(
         UpdateKeyDialog(
             onDismiss = { showUpdateKeyDialog = false },
             onRedeem = { code -> authViewModel.updateKeyFromDrawer(code) }
+        )
+    }
+
+    if (showChangePasswordDialog && authViewModel != null) {
+        ChangePasswordDialog(
+            onDismiss = { showChangePasswordDialog = false },
+            onSubmit = { cur, new, conf -> authViewModel.changePassword(cur, new, conf) },
+            onSuccess = {
+                showChangePasswordDialog = false
+                snackbarMessage = "Password badal gaya"
+            }
         )
     }
 }
