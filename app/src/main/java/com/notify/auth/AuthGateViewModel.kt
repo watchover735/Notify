@@ -15,6 +15,12 @@ private const val TAG = "AuthGateViewModel"
 sealed interface AuthGateState {
     data object Loading : AuthGateState
     data class NeedLogin(val error: String? = null, val isLoading: Boolean = false) : AuthGateState
+    data class NeedEmailOtp(
+        val email: String,
+        val error: String? = null,
+        val message: String? = null,
+        val isLoading: Boolean = false
+    ) : AuthGateState
     data class NeedNickname(val error: String? = null, val isLoading: Boolean = false) : AuthGateState
     data class NeedKey(
         val message: String? = null,
@@ -321,6 +327,8 @@ class AuthGateViewModel(application: Application) : AndroidViewModel(application
         val curr = _gateState.value
         if (curr is AuthGateState.NeedLogin && curr.error != null) {
             _gateState.value = curr.copy(error = null)
+        } else if (curr is AuthGateState.NeedEmailOtp && (curr.error != null || curr.message != null)) {
+            _gateState.value = curr.copy(error = null, message = null)
         } else if (curr is AuthGateState.NeedNickname && curr.error != null) {
             _gateState.value = curr.copy(error = null)
         } else if (curr is AuthGateState.NeedKey && curr.message != null) {

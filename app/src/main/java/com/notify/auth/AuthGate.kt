@@ -35,13 +35,24 @@ import com.notify.ui.theme.ErrorRed
 import com.notify.ui.theme.TextPrimary
 import com.notify.ui.theme.TextSecondary
 
-private enum class AuthGateScreenKey {
+internal enum class AuthGateScreenKey {
     Loading,
     NeedLogin,
+    NeedEmailOtp,
     NeedNickname,
     NeedKey,
     Ready,
     Error
+}
+
+internal fun AuthGateState.toScreenKey(): AuthGateScreenKey = when (this) {
+    is AuthGateState.Loading -> AuthGateScreenKey.Loading
+    is AuthGateState.NeedLogin -> AuthGateScreenKey.NeedLogin
+    is AuthGateState.NeedEmailOtp -> AuthGateScreenKey.NeedEmailOtp
+    is AuthGateState.NeedNickname -> AuthGateScreenKey.NeedNickname
+    is AuthGateState.NeedKey -> AuthGateScreenKey.NeedKey
+    is AuthGateState.Ready -> AuthGateScreenKey.Ready
+    is AuthGateState.Error -> AuthGateScreenKey.Error
 }
 
 @Composable
@@ -50,15 +61,7 @@ fun AuthGate(
     content: @Composable () -> Unit
 ) {
     val gateState by viewModel.gateState.collectAsState()
-
-    val screenKey = when (gateState) {
-        is AuthGateState.Loading -> AuthGateScreenKey.Loading
-        is AuthGateState.NeedLogin -> AuthGateScreenKey.NeedLogin
-        is AuthGateState.NeedNickname -> AuthGateScreenKey.NeedNickname
-        is AuthGateState.NeedKey -> AuthGateScreenKey.NeedKey
-        is AuthGateState.Ready -> AuthGateScreenKey.Ready
-        is AuthGateState.Error -> AuthGateScreenKey.Error
-    }
+    val screenKey = gateState.toScreenKey()
 
     Crossfade(targetState = screenKey, label = "AuthGateTransition") { targetScreen ->
         when (targetScreen) {
@@ -90,6 +93,10 @@ fun AuthGate(
                     onEmailSignUp = { email, pass -> viewModel.signUpWithEmail(email, pass) },
                     onDismissError = { viewModel.dismissError() }
                 )
+            }
+
+            AuthGateScreenKey.NeedEmailOtp -> {
+                // Handled in Commit B1 (OtpScreen)
             }
 
             AuthGateScreenKey.NeedNickname -> {
