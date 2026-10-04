@@ -182,37 +182,6 @@ fun AuthGate(
 
             AuthGateScreenKey.Ready -> {
                 content()
-
-                // Soft update dialog only shown in Ready state
-                val softUpdate by viewModel.softUpdateState.collectAsState()
-                val context = LocalContext.current
-                val currentSoft = softUpdate
-                if (currentSoft != null) {
-                    SoftUpdateDialog(
-                        config = currentSoft.config,
-                        skipsLeft = currentSoft.skipsLeft,
-                        onUpdateNow = {
-                            viewModel.onAcceptSoftUpdate()
-                            val activeInfo = AppUpdater.updateAvailable.value
-                            if (activeInfo != null && activeInfo.apkAsset != null) {
-                                AppUpdater.onUpdateNowClicked(context, activeInfo)
-                            } else {
-                                AppUpdater.checkForUpdates(context, forceCheck = true)
-                                val targetUrl = currentSoft.config.downloadUrl?.takeIf { it.isNotBlank() }
-                                    ?: AppUpdater.GITHUB_LATEST_RELEASE_URL
-                                try {
-                                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(targetUrl)).apply {
-                                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                    }
-                                    context.startActivity(intent)
-                                } catch (_: Exception) {}
-                            }
-                        },
-                        onLater = {
-                            viewModel.onDismissSoftUpdate()
-                        }
-                    )
-                }
             }
 
             AuthGateScreenKey.Error -> {
@@ -266,5 +235,36 @@ fun AuthGate(
                 }
             }
         }
+    }
+
+    // 2. Soft update dialog shown over current screen when soft update is available
+    val softUpdate by viewModel.softUpdateState.collectAsState()
+    val context = LocalContext.current
+    val currentSoft = softUpdate
+    if (currentSoft != null) {
+        SoftUpdateDialog(
+            config = currentSoft.config,
+            skipsLeft = currentSoft.skipsLeft,
+            onUpdateNow = {
+                viewModel.onAcceptSoftUpdate()
+                val activeInfo = AppUpdater.updateAvailable.value
+                if (activeInfo != null && activeInfo.apkAsset != null) {
+                    AppUpdater.onUpdateNowClicked(context, activeInfo)
+                } else {
+                    AppUpdater.checkForUpdates(context, forceCheck = true)
+                    val targetUrl = currentSoft.config.downloadUrl?.takeIf { it.isNotBlank() }
+                        ?: AppUpdater.GITHUB_LATEST_RELEASE_URL
+                    try {
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(targetUrl)).apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        context.startActivity(intent)
+                    } catch (_: Exception) {}
+                }
+            },
+            onLater = {
+                viewModel.onDismissSoftUpdate()
+            }
+        )
     }
 }
