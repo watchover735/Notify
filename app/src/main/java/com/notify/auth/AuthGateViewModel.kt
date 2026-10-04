@@ -1,10 +1,15 @@
 package com.notify.auth
 
 import android.app.Application
+import android.os.SystemClock
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.notify.core.preferences.UserProfilePreferences
+import com.notify.updater.AppConfig
+import com.notify.updater.AppConfigRepository
+import com.notify.updater.HardUpdateReason
+import com.notify.updater.UpdatePolicyDecision
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -15,6 +20,16 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 
 private const val TAG = "AuthGateViewModel"
+
+data class HardUpdateState(
+    val config: AppConfig,
+    val reason: HardUpdateReason
+)
+
+data class SoftUpdateState(
+    val config: AppConfig,
+    val skipsLeft: Int
+)
 
 sealed interface AuthGateState {
     data object Loading : AuthGateState
@@ -60,7 +75,25 @@ class AuthGateViewModel(application: Application) : AndroidViewModel(application
     private var isPlaybackActiveSupplier: (() -> Boolean)? = null
     private var isAppInForeground = true
 
+    // App Config & Force/Soft Update
+    private val appConfigRepository = AppConfigRepository(application)
+    private val _hardUpdateState = MutableStateFlow<HardUpdateState?>(null)
+    val hardUpdateState: StateFlow<HardUpdateState?> = _hardUpdateState.asStateFlow()
+
+    private val _softUpdateState = MutableStateFlow<SoftUpdateState?>(null)
+    val softUpdateState: StateFlow<SoftUpdateState?> = _softUpdateState.asStateFlow()
+
+    @Volatile
+    private var hasDismissedSoftDialogThisSession = false
+    @Volatile
+    private var lastConfigFetchElapsed = 0L
+
+    companion object {
+        private const val CONFIG_FETCH_THROTTLE_MS = 15 * 60 * 1000L // 15 mins
+    }
+
     init {
+        checkAppConfig(isResume = false)
         checkInitialAuthState()
     }
 
@@ -289,11 +322,90 @@ class AuthGateViewModel(application: Application) : AndroidViewModel(application
             this.onPausePlayback = onRevokedOrExpired
         }
         isAppInForeground = true
+
+        // Always verify update requirements on resume (15-min throttled)
+        checkAppConfig(isResume = true)
+
         if (_gateState.value !is AuthGateState.Ready) return
 
         viewModelScope.launch {
             performEntitlementCheck(forceRefresh = false)
         }
+    }
+
+    /**
+     * Checks remote app configuration and evaluates update policy (Hard/Soft/None).
+     * Cold start: decides immediately from local cache, then launches background fetch.
+     * Resume: throttled to 15-minute intervals.
+     */
+    fun checkAppConfig(isResume: Boolean = false) {
+        // 1. Immediate decision from cached config
+        val (cachedDecision, cachedConfig) = appConfigRepository.evaluatePolicy(null)
+        if (cachedDecision is UpdatePolicyDecision.Hard && cachedConfig != null) {
+            _hardUpdateState.value = HardUpdateState(cachedConfig, cachedDecision.reason)
+            _softUpdateState.value = null
+            onPausePlayback?.invoke()
+        } else if (cachedDecision is UpdatePolicyDecision.Soft && cachedConfig != null && !hasDismissedSoftDialogThisSession) {
+            _softUpdateState.value = SoftUpdateState(cachedConfig, cachedDecision.skipsLeft)
+        }
+
+        // 2. Fresh background fetch with 15-min throttle on resume
+        val now = SystemClock.elapsedRealtime()
+        if (isResume && (now - lastConfigFetchElapsed) < CONFIG_FETCH_THROTTLE_MS && lastConfigFetchElapsed != 0L) {
+            return
+        }
+        lastConfigFetchElapsed = now
+
+        viewModelScope.launch {
+            val result = appConfigRepository.fetchAppConfig()
+            if (result.isSuccess) {
+                val freshConfig = result.getOrNull()
+                val (freshDecision, config) = appConfigRepository.evaluatePolicy(freshConfig)
+                if (freshDecision is UpdatePolicyDecision.Hard && config != null) {
+                    _hardUpdateState.value = HardUpdateState(config, freshDecision.reason)
+                    _softUpdateState.value = null
+                    onPausePlayback?.invoke()
+                } else if (freshDecision is UpdatePolicyDecision.Soft && config != null && !hasDismissedSoftDialogThisSession) {
+                    _softUpdateState.value = SoftUpdateState(config, freshDecision.skipsLeft)
+                } else if (freshDecision is UpdatePolicyDecision.None) {
+                    _hardUpdateState.value = null
+                    _softUpdateState.value = null
+                }
+            }
+        }
+    }
+
+    /**
+     * Called when the user clicks "Baad me" in the soft update dialog.
+     * Increments the skip counter for the target version, dismisses dialog for this session,
+     * and transitions to Hard block if skips are now exhausted.
+     */
+    fun onDismissSoftUpdate() {
+        val currentSoft = _softUpdateState.value ?: return
+        appConfigRepository.incrementSkips(currentSoft.config.latestVersionCode)
+        hasDismissedSoftDialogThisSession = true
+        _softUpdateState.value = null
+
+        val (decision, config) = appConfigRepository.evaluatePolicy(currentSoft.config)
+        if (decision is UpdatePolicyDecision.Hard && config != null) {
+            _hardUpdateState.value = HardUpdateState(config, decision.reason)
+            onPausePlayback?.invoke()
+        }
+    }
+
+    /**
+     * Called when the user clicks "Update karo" in the soft update dialog.
+     */
+    fun onAcceptSoftUpdate() {
+        hasDismissedSoftDialogThisSession = true
+        _softUpdateState.value = null
+    }
+
+    /**
+     * Exposes playback pause to updater UI components.
+     */
+    fun pausePlayback() {
+        onPausePlayback?.invoke()
     }
 
     fun onAppPause() {

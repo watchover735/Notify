@@ -1,5 +1,7 @@
 package com.notify.auth
 
+import android.content.Intent
+import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.background
@@ -28,6 +30,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -38,6 +41,9 @@ import com.notify.ui.theme.EmeraldAccent
 import com.notify.ui.theme.ErrorRed
 import com.notify.ui.theme.TextPrimary
 import com.notify.ui.theme.TextSecondary
+import com.notify.updater.AppUpdater
+import com.notify.updater.HardUpdateScreen
+import com.notify.updater.SoftUpdateDialog
 
 internal enum class AuthGateScreenKey {
     Loading,
@@ -64,6 +70,17 @@ fun AuthGate(
     viewModel: AuthGateViewModel,
     content: @Composable () -> Unit
 ) {
+    // 1. Mandatory HARD update takes highest precedence over all states
+    val hardUpdate by viewModel.hardUpdateState.collectAsState()
+    if (hardUpdate != null) {
+        HardUpdateScreen(
+            config = hardUpdate!!.config,
+            reason = hardUpdate!!.reason,
+            onPausePlayback = { viewModel.pausePlayback() }
+        )
+        return
+    }
+
     val gateState by viewModel.gateState.collectAsState()
     val screenKey = gateState.toScreenKey()
 
@@ -165,6 +182,37 @@ fun AuthGate(
 
             AuthGateScreenKey.Ready -> {
                 content()
+
+                // Soft update dialog only shown in Ready state
+                val softUpdate by viewModel.softUpdateState.collectAsState()
+                val context = LocalContext.current
+                val currentSoft = softUpdate
+                if (currentSoft != null) {
+                    SoftUpdateDialog(
+                        config = currentSoft.config,
+                        skipsLeft = currentSoft.skipsLeft,
+                        onUpdateNow = {
+                            viewModel.onAcceptSoftUpdate()
+                            val activeInfo = AppUpdater.updateAvailable.value
+                            if (activeInfo != null && activeInfo.apkAsset != null) {
+                                AppUpdater.onUpdateNowClicked(context, activeInfo)
+                            } else {
+                                AppUpdater.checkForUpdates(context, forceCheck = true)
+                                val targetUrl = currentSoft.config.downloadUrl?.takeIf { it.isNotBlank() }
+                                    ?: AppUpdater.GITHUB_LATEST_RELEASE_URL
+                                try {
+                                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(targetUrl)).apply {
+                                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    }
+                                    context.startActivity(intent)
+                                } catch (_: Exception) {}
+                            }
+                        },
+                        onLater = {
+                            viewModel.onDismissSoftUpdate()
+                        }
+                    )
+                }
             }
 
             AuthGateScreenKey.Error -> {
