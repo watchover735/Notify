@@ -652,4 +652,18 @@ class AuthGateViewModel(application: Application) : AndroidViewModel(application
             else -> "Key: $days din bache"
         }
     }
+
+    suspend fun updateKeyFromDrawer(code: String): Result<RedeemResult> {
+        val session = authRepository.getStoredSession()
+            ?: return Result.failure(Exception("Not authenticated"))
+        val cleanCode = code.trim().uppercase().replace("\\s+".toRegex(), "")
+        val res = profileAndKeyRepository.redeemKey(cleanCode, session.accessToken)
+        if (res.isSuccess) {
+            val redeem = res.getOrThrow()
+            if (redeem.code == "ok") {
+                startLiveExpiryChecks(redeem.expiresAtEpochMs)
+            }
+        }
+        return res
+    }
 }

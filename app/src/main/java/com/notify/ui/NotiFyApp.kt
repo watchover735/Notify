@@ -41,6 +41,7 @@ import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.rememberCoroutineScope
 import com.notify.auth.AuthGateViewModel
 import com.notify.ui.components.ProfileDrawerSheet
+import com.notify.ui.components.UpdateKeyDialog
 import com.notify.ui.theme.DarkBackground
 import com.notify.ui.theme.DarkSurface
 import com.notify.ui.theme.DarkSurfaceVariant
@@ -357,5 +358,12 @@ fun NotiFyApp(
             )
         }
     }
+    }
+
+    if (showUpdateKeyDialog && authViewModel != null) {
+        UpdateKeyDialog(
+            onDismiss = { showUpdateKeyDialog = false },
+            onRedeem = { code -> authViewModel.updateKeyFromDrawer(code) }
+        )
     }
 }
