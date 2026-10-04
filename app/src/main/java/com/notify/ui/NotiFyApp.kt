@@ -7,12 +7,14 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -47,8 +49,11 @@ import com.notify.ui.theme.DarkBackground
 import com.notify.ui.theme.DarkSurface
 import com.notify.ui.theme.DarkSurfaceVariant
 import com.notify.ui.theme.EmeraldAccent
+import com.notify.ui.theme.ErrorRed
 import com.notify.ui.theme.TextPrimary
 import com.notify.ui.theme.TextSecondary
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 
 @Composable
@@ -375,6 +380,45 @@ fun NotiFyApp(
             onSuccess = {
                 showChangePasswordDialog = false
                 snackbarMessage = "Password badal gaya"
+            }
+        )
+    }
+
+    if (showLogoutConfirmDialog && authViewModel != null) {
+        AlertDialog(
+            onDismissRequest = { showLogoutConfirmDialog = false },
+            containerColor = DarkSurface,
+            title = {
+                Text(
+                    text = "Logout",
+                    fontWeight = FontWeight.Bold,
+                    color = TextPrimary
+                )
+            },
+            text = {
+                Text(
+                    text = "Kya aap NotiFy se logout karna chahte hain?",
+                    color = TextSecondary,
+                    fontSize = 14.sp
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showLogoutConfirmDialog = false
+                        playbackViewModel.pause()
+                        authViewModel.logout()
+                    }
+                ) {
+                    Text(text = "Haan, Logout", color = ErrorRed, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showLogoutConfirmDialog = false }
+                ) {
+                    Text(text = "Nahi", color = TextSecondary)
+                }
             }
         )
     }

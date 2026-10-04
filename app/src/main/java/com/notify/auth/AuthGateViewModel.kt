@@ -777,4 +777,22 @@ class AuthGateViewModel(application: Application) : AndroidViewModel(application
             }
         }
     }
+
+    fun logout() {
+        stopLiveExpiryChecks()
+        onPausePlayback?.invoke()
+
+        val session = authRepository.getStoredSession()
+        viewModelScope.launch {
+            try {
+                authRepository.signOut(session?.accessToken)
+            } catch (e: Exception) {
+                Log.w(TAG, "Error during signOut network call", e)
+            } finally {
+                profileAndKeyRepository.clearLocalData()
+                authRepository.clearLocalSession()
+                _gateState.value = AuthGateState.NeedLogin()
+            }
+        }
+    }
 }
