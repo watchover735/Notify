@@ -1,9 +1,8 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.8";
 
 // ── Environment & Secrets (Read exclusively from Deno.env) ───────────────────
 const BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN") || "";
-const ADMIN_TELEGRAM_ID = (Deno.env.get("ADMIN_TELEGRAM_ID") || Deno.env.get("ADMIN_CHAT_ID"))?.trim() || "";
+const ADMIN_TELEGRAM_ID = (Deno.env.get("ADMIN_TELEGRAM_ID") || Deno.env.get("ADMIN_CHAT_ID"))?.trim().replace(/^["']|["']$/g, "") || "";
 const WEBHOOK_SECRET = Deno.env.get("TELEGRAM_WEBHOOK_SECRET") || "";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
@@ -138,16 +137,19 @@ function getHelpText(): string {
 
 // ── HTTP Request Handler ─────────────────────────────────────────────────────
 
-serve(async (req: Request) => {
+Deno.serve(async (req: Request) => {
   // Only accept POST requests
   if (req.method !== "POST") {
     return new Response("Method not allowed", { status: 405 });
   }
 
-  // 1. Verify Telegram Webhook Secret Token header
-  const secretHeader = req.headers.get("x-telegram-bot-api-secret-token");
-  if (!WEBHOOK_SECRET || secretHeader !== WEBHOOK_SECRET) {
-    return new Response("Unauthorized", { status: 401 });
+  // 1. Verify Telegram Webhook Secret Token header (only if WEBHOOK_SECRET is configured)
+  if (WEBHOOK_SECRET) {
+    const secretHeader = req.headers.get("x-telegram-bot-api-secret-token");
+    if (secretHeader !== WEBHOOK_SECRET) {
+      console.warn("Unauthorized webhook call: invalid x-telegram-bot-api-secret-token header");
+      return new Response("Unauthorized", { status: 401 });
+    }
   }
 
   let update: any = null;
@@ -157,12 +159,35 @@ serve(async (req: Request) => {
     return new Response("Invalid JSON payload", { status: 400 });
   }
 
-  // 2. Authenticate Sender: Strictly compare sender ID with ADMIN_TELEGRAM_ID
   const senderId: number | undefined =
     update.message?.from?.id ?? update.callback_query?.from?.id;
 
+  const chatId: number =
+    update.message?.chat?.id ?? update.callback_query?.message?.chat?.id;
+
+  // 2. Authenticate Sender: Compare sender ID with configured admin ID
+  if (!ADMIN_TELEGRAM_ID) {
+    console.error("ADMIN_TELEGRAM_ID or ADMIN_CHAT_ID is not configured in Supabase secrets!");
+    if (chatId) {
+      await sendMessage(
+        chatId,
+        `⚠️ <b>Setup Incomplete:</b> Admin ID is not configured in Supabase secrets.\nYour Telegram Numeric ID is: <code>${senderId}</code>\n\nPlease set <code>ADMIN_TELEGRAM_ID="${senderId}"</code> in Supabase secrets.`
+      );
+    }
+    return new Response(JSON.stringify({ ok: true, setup_needed: true }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
   if (!senderId || String(senderId) !== ADMIN_TELEGRAM_ID) {
-    // SILENT IGNORE: Do NOT reply, do NOT acknowledge presence to unauthorized users.
+    console.log(`Unauthorized sender: senderId=${senderId}, expected adminId=${ADMIN_TELEGRAM_ID}`);
+    if (chatId) {
+      await sendMessage(
+        chatId,
+        `⛔ <b>Access Denied:</b> This bot is configured for a specific admin.\n\nYour Telegram User ID: <code>${senderId}</code>\n\nIf you are the owner, set this ID in Supabase secrets:\n<code>ADMIN_TELEGRAM_ID="${senderId}"</code>`
+      );
+    }
     return new Response(JSON.stringify({ ok: true }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
@@ -172,9 +197,6 @@ serve(async (req: Request) => {
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
     auth: { persistSession: false },
   });
-
-  const chatId: number =
-    update.message?.chat?.id ?? update.callback_query?.message?.chat?.id;
 
   try {
     // 3. Deduplication Check: Insert update_id into processed_updates
