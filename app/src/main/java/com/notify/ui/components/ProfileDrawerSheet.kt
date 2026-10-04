@@ -21,11 +21,18 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import com.notify.DeveloperConfig
+import com.notify.ui.library.DeveloperCreditBottomSheet
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -59,6 +66,8 @@ fun ProfileDrawerSheet(
     val initial = nickname.trim().firstOrNull()?.uppercaseChar()?.toString()
         ?: email.trim().firstOrNull()?.uppercaseChar()?.toString()
         ?: "N"
+
+    var showDeveloperSheet by remember { mutableStateOf(false) }
 
     ModalDrawerSheet(
         modifier = modifier
@@ -170,6 +179,13 @@ fun ProfileDrawerSheet(
 
             Spacer(modifier = Modifier.height(6.dp))
             ProfileDrawerItem(
+                icon = Icons.Default.Person,
+                title = DeveloperConfig.DEVELOPED_BY,
+                onClick = { showDeveloperSheet = true }
+            )
+
+            Spacer(modifier = Modifier.height(6.dp))
+            ProfileDrawerItem(
                 icon = Icons.AutoMirrored.Filled.Logout,
                 title = "Logout",
                 titleColor = ErrorRed,
@@ -180,15 +196,34 @@ fun ProfileDrawerSheet(
             Spacer(modifier = Modifier.weight(1f))
 
             // ── Footer ───────────────────────────────────────────────────
-            if (versionName.isNotBlank()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { showDeveloperSheet = true }
+                    .padding(horizontal = 4.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                if (versionName.isNotBlank()) {
+                    Text(
+                        text = "NotiFy · v$versionName",
+                        color = TextSecondary.copy(alpha = 0.5f),
+                        fontSize = 12.sp
+                    )
+                }
                 Text(
-                    text = "NotiFy · v$versionName",
-                    color = TextSecondary.copy(alpha = 0.5f),
+                    text = DeveloperConfig.DEVELOPED_BY,
+                    color = EmeraldAccent,
                     fontSize = 12.sp,
-                    modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)
+                    fontWeight = FontWeight.SemiBold
                 )
             }
         }
+    }
+
+    if (showDeveloperSheet) {
+        DeveloperCreditBottomSheet(onDismiss = { showDeveloperSheet = false })
     }
 }
 

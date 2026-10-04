@@ -46,41 +46,92 @@ import com.notify.ui.theme.TextSecondary
 import com.notify.ui.theme.TextTertiary
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.ui.text.style.TextOverflow
 
 private const val TAG = "DeveloperCredit"
 
 /**
- * Centered compact credit row for "Developed by Rahul" displayed at the bottom of Artists/Library lists.
+ * Premium pinned profile row for "Developed by Rahul" with avatar, verified badge, and contact action.
  */
 @Composable
 fun DeveloperCreditRow(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Box(
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(14.dp),
+        color = DarkSurfaceVariant,
+        border = BorderStroke(1.dp, EmeraldAccent.copy(alpha = 0.25f)),
         modifier = modifier
             .fillMaxWidth()
-            .padding(vertical = 18.dp),
-        contentAlignment = Alignment.Center
+            .padding(horizontal = 16.dp, vertical = 6.dp)
     ) {
-        Surface(
-            onClick = onClick,
-            shape = RoundedCornerShape(16.dp),
-            color = Color.Transparent
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+            // Left: Developer Avatar Circle with Emerald Gradient
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(
+                        Brush.linearGradient(
+                            listOf(EmeraldAccent, Color(0xFF007A5A))
+                        )
+                    ),
+                contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = DeveloperConfig.DEVELOPED_BY,
-                    color = TextSecondary,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium,
-                    letterSpacing = 0.4.sp
+                    text = "R",
+                    color = Color.Black,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 17.sp
                 )
             }
+
+            Spacer(modifier = Modifier.width(12.dp))
+
+            // Center: Title + Verified Badge + Subtitle
+            Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = DeveloperConfig.DEVELOPED_BY,
+                        color = TextPrimary,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Icon(
+                        imageVector = Icons.Default.CheckCircle,
+                        contentDescription = "Verified Developer",
+                        tint = EmeraldAccent,
+                        modifier = Modifier.size(15.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = "Connect on Instagram / WhatsApp",
+                    color = TextSecondary,
+                    fontSize = 12.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            // Right: Chevron Indicator
+            Icon(
+                imageVector = Icons.Default.ChevronRight,
+                contentDescription = null,
+                tint = TextSecondary.copy(alpha = 0.6f),
+                modifier = Modifier.size(18.dp)
+            )
         }
     }
 }

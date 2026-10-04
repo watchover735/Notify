@@ -13,8 +13,8 @@ android {
         applicationId = "com.notify"
         minSdk = 26
         targetSdk = 35
-        versionCode = 21
-        versionName = "0.7.5"
+        versionCode = 22
+        versionName = "0.7.6"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("long", "BUILD_TIME", "${System.currentTimeMillis()}L")

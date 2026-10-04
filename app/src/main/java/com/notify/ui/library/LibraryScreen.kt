@@ -356,7 +356,13 @@ fun LibraryScreen(
             )
         }
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // ── Pinned Developer Credit Card: Developed by Rahul ────────────────
+        DeveloperCreditRow(
+            onClick = { showCreditSheet = true },
+            modifier = Modifier.padding(bottom = 6.dp)
+        )
 
         // ── 2. Filter Chips: Playlists | Artists | Downloads ────────────────────────
         LazyRow(
