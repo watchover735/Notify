@@ -98,9 +98,9 @@ fun HardUpdateScreen(
 
             Text(
                 text = if (reason == HardUpdateReason.URGENT) {
-                    "Zaroori Update Available"
+                    "Critical Update Available"
                 } else {
-                    "Update Karna Zaroori Hai"
+                    "Update Required"
                 },
                 color = TextPrimary,
                 fontSize = 22.sp,
@@ -112,7 +112,7 @@ fun HardUpdateScreen(
 
             Text(
                 text = config.forceMessage.ifBlank {
-                    "NotiFy ka naya update zaroori hai. App use karne ke liye kripya update karein."
+                    "A critical update is required to continue using NotiFy. Please update to the latest version."
                 },
                 color = TextSecondary,
                 fontSize = 15.sp,
@@ -124,7 +124,7 @@ fun HardUpdateScreen(
             if (reason == HardUpdateReason.SKIPS_EXHAUSTED) {
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "Aapne skip limit (${config.maxSkips}) poori kar li hai.",
+                    text = "You have reached the maximum skip limit (${config.maxSkips}).",
                     color = Color(0xFFF59E0B), // Warm amber
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Medium,
@@ -156,7 +156,7 @@ fun HardUpdateScreen(
                 enabled = !isCheckingOrDownloading
             ) {
                 Text(
-                    text = if (isCheckingOrDownloading) "Checking / Starting..." else "Update Karo",
+                    text = if (isCheckingOrDownloading) "Checking / Starting..." else "Update Now",
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold
                 )
@@ -179,7 +179,7 @@ fun HardUpdateScreen(
                 )
             ) {
                 Text(
-                    text = "Browser me download karo",
+                    text = "Download in Browser",
                     fontSize = 15.sp
                 )
             }
@@ -202,7 +202,7 @@ private fun handlePrimaryUpdateClick(
             context.startActivity(intent)
             Toast.makeText(
                 context,
-                "NotiFy ke liye 'Install unknown apps' allow karein, phir wapas aayein",
+                "Please allow 'Install unknown apps' for NotiFy, then return to continue",
                 Toast.LENGTH_LONG
             ).show()
             onComplete()
@@ -234,6 +234,6 @@ private fun openInBrowser(context: Context, urlString: String?) {
         }
         context.startActivity(browserIntent)
     } catch (e: Exception) {
-        Toast.makeText(context, "Browser open nahi ho saka: ${e.message}", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, "Could not open browser: ${e.message}", Toast.LENGTH_SHORT).show()
     }
 }

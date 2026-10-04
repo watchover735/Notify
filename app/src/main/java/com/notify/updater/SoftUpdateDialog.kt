@@ -45,7 +45,7 @@ fun SoftUpdateDialog(
         ),
         title = {
             Text(
-                text = "Naya version available",
+                text = "New Update Available",
                 color = TextPrimary,
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold
@@ -60,7 +60,7 @@ fun SoftUpdateDialog(
             ) {
                 Text(
                     text = config.forceMessage.ifBlank {
-                        "NotiFy ka naya update aa chuka hai. Behtar features ke liye update karein."
+                        "A new update is available for NotiFy with improvements and new features."
                     },
                     color = TextSecondary,
                     style = MaterialTheme.typography.bodyMedium
@@ -69,7 +69,7 @@ fun SoftUpdateDialog(
                 Spacer(modifier = Modifier.height(14.dp))
 
                 Text(
-                    text = "Skip karne ke $skipsLeft mauke bache",
+                    text = "$skipsLeft skips remaining",
                     color = EmeraldAccent,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium
@@ -82,7 +82,7 @@ fun SoftUpdateDialog(
                 colors = ButtonDefaults.textButtonColors(contentColor = EmeraldAccent)
             ) {
                 Text(
-                    text = "Update karo",
+                    text = "Update Now",
                     fontWeight = FontWeight.Bold
                 )
             }
@@ -92,7 +92,7 @@ fun SoftUpdateDialog(
                 onClick = onLater,
                 colors = ButtonDefaults.textButtonColors(contentColor = TextSecondary)
             ) {
-                Text(text = "Baad me")
+                Text(text = "Later")
             }
         },
         containerColor = DarkSurface,

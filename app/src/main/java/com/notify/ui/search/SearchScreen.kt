@@ -657,7 +657,7 @@ fun SearchScreen(
                             EmptyState(
                                 icon = Icons.Default.SearchOff,
                                 title = "Not in your library yet",
-                                description = "Ye gaana tumhari library me nahi mila. Poori duniya me dhoond ke dekhein?"
+                                description = "This song wasn't found in your library. Search online to find it?"
                             )
                         }
                     }

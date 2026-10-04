@@ -14,5 +14,5 @@ object DeveloperConfig {
     const val INSTAGRAM_HANDLE = "rahul" 
     const val WHATSAPP_NUMBER = "910000000000"
     
-    const val WHATSAPP_PREFILLED_MESSAGE = "Hi Rahul, NotiFy ke baare me baat karni hai"
+    const val WHATSAPP_PREFILLED_MESSAGE = "Hello Rahul, I would like to talk about NotiFy."
 }

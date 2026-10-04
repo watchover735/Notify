@@ -33,10 +33,11 @@ class ForcedUpdateSystemTest {
 
     @Test
     fun `test urgent forced update triggers hard update state and pauses playback`() {
-        // Cache a config requiring min_supported = 25 (current BuildConfig.VERSION_CODE is 20)
+        val currentCode = com.notify.BuildConfig.VERSION_CODE
+        val urgentTarget = currentCode + 5
         val urgentConfig = AppConfig(
-            latestVersionCode = 25,
-            minSupportedVersionCode = 25,
+            latestVersionCode = urgentTarget,
+            minSupportedVersionCode = urgentTarget,
             maxSkips = 3,
             forceMessage = "Urgent security update required."
         )
@@ -53,16 +54,18 @@ class ForcedUpdateSystemTest {
         val hardState = viewModel.hardUpdateState.value
         assertNotNull("Hard update state must be active for urgent update", hardState)
         assertEquals(HardUpdateReason.URGENT, hardState!!.reason)
-        assertEquals(25, hardState.config.minSupportedVersionCode)
+        assertEquals(urgentTarget, hardState.config.minSupportedVersionCode)
         assertNull("Soft update must be null when hard update is active", viewModel.softUpdateState.value)
     }
 
     @Test
     fun `test soft update allows 3 skips before turning into hard block`() {
-        // Config: latest = 22, minSupported = 19 (current = 20)
+        val currentCode = com.notify.BuildConfig.VERSION_CODE
+        val latestTarget = currentCode + 2
+        val minTarget = (currentCode - 1).coerceAtLeast(1)
         val softConfig = AppConfig(
-            latestVersionCode = 22,
-            minSupportedVersionCode = 19,
+            latestVersionCode = latestTarget,
+            minSupportedVersionCode = minTarget,
             maxSkips = 3,
             forceMessage = "Optional new features"
         )
@@ -77,31 +80,31 @@ class ForcedUpdateSystemTest {
         assertEquals(3, softState!!.skipsLeft)
         assertNull(viewModel.hardUpdateState.value)
 
-        // User taps "Baad me" (1st skip)
+        // User taps "Later" (1st skip)
         viewModel.onDismissSoftUpdate()
-        assertEquals(1, appConfigRepo.getSkipsUsed(22))
+        assertEquals(1, appConfigRepo.getSkipsUsed(latestTarget))
         assertNull("Dismissed soft update dialog must be null for current session", viewModel.softUpdateState.value)
 
         // 2nd skip simulation:
-        appConfigRepo.incrementSkips(22) // skips = 2
-        assertEquals(2, appConfigRepo.getSkipsUsed(22))
+        appConfigRepo.incrementSkips(latestTarget) // skips = 2
+        assertEquals(2, appConfigRepo.getSkipsUsed(latestTarget))
 
         // 3rd skip simulation:
-        appConfigRepo.incrementSkips(22) // skips = 3 (exhausted)
-        assertEquals(3, appConfigRepo.getSkipsUsed(22))
+        appConfigRepo.incrementSkips(latestTarget) // skips = 3 (exhausted)
+        assertEquals(3, appConfigRepo.getSkipsUsed(latestTarget))
 
         // Re-evaluating now must yield HARD(SKIPS_EXHAUSTED)
-        val (decision, config) = appConfigRepo.evaluatePolicy(softConfig, currentCode = 20)
+        val (decision, config) = appConfigRepo.evaluatePolicy(softConfig, currentCode = currentCode)
         assertTrue(decision is UpdatePolicyDecision.Hard)
         assertEquals(HardUpdateReason.SKIPS_EXHAUSTED, (decision as UpdatePolicyDecision.Hard).reason)
     }
 
     @Test
     fun `test up to date app has neither hard nor soft update state`() {
-        // Current code = 20, latest = 20, min = 19
+        val currentCode = com.notify.BuildConfig.VERSION_CODE
         val currentConfig = AppConfig(
-            latestVersionCode = 20,
-            minSupportedVersionCode = 19,
+            latestVersionCode = currentCode,
+            minSupportedVersionCode = (currentCode - 1).coerceAtLeast(1),
             maxSkips = 3,
             forceMessage = "Normal"
         )

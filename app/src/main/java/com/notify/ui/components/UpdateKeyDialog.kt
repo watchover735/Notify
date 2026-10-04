@@ -89,37 +89,37 @@ fun UpdateKeyDialog(
                     "ok" -> {
                         isSuccess = true
                         val expiryDesc = formatKeyExpiry(redeem.expiresAtEpochMs, redeem.serverTimeEpochMs)
-                        feedbackMessage = "Key add ho gayi! $expiryDesc"
+                        feedbackMessage = "Key redeemed successfully! $expiryDesc"
                         keyInput = ""
                     }
                     "permanent_already" -> {
                         isSuccess = false
-                        feedbackMessage = "Aapke paas pehle se permanent access hai, key use nahi hui"
+                        feedbackMessage = "You already have permanent access, key was not used"
                     }
                     "invalid" -> {
                         isSuccess = false
-                        feedbackMessage = "Key galat hai. Kripya check karein"
+                        feedbackMessage = "Invalid key. Please check and try again"
                     }
                     "already_used" -> {
                         isSuccess = false
-                        feedbackMessage = "Ye key pehle use ho chuki hai"
+                        feedbackMessage = "This key has already been used"
                     }
                     "revoked" -> {
                         isSuccess = false
-                        feedbackMessage = "Key revoke kar di gayi. Admin se contact karo"
+                        feedbackMessage = "Key has been revoked. Please contact admin"
                     }
                     "too_many_attempts" -> {
                         isSuccess = false
-                        feedbackMessage = "Bahut zyada koshish. 15 min baad try karo"
+                        feedbackMessage = "Too many attempts. Please try again after 15 minutes"
                     }
                     else -> {
                         isSuccess = false
-                        feedbackMessage = redeem.message.ifBlank { "Key verify karne me dikkat aayi" }
+                        feedbackMessage = redeem.message.ifBlank { "Key verification failed" }
                     }
                 }
             } else {
                 isSuccess = false
-                val error = res.exceptionOrNull()?.message ?: "Server respond nahi kar raha"
+                val error = res.exceptionOrNull()?.message ?: "Server is not responding"
                 feedbackMessage = error
             }
         }
@@ -191,7 +191,7 @@ fun UpdateKeyDialog(
                 Spacer(modifier = Modifier.height(14.dp))
 
                 Text(
-                    text = "Nayi key enter karein. Existing access ke sath naya time add (stack) ho jayega.",
+                    text = "Enter a new key. Additional time will be added (stacked) to your existing access.",
                     fontSize = 13.sp,
                     color = TextSecondary,
                     textAlign = TextAlign.Start,
@@ -316,15 +316,15 @@ fun UpdateKeyDialog(
 }
 
 private fun formatKeyExpiry(expiresAtMs: Long?, serverTimeMs: Long?): String {
-    if (expiresAtMs == null) return "Ab permanent access hai."
+    if (expiresAtMs == null) return "Permanent access active."
     val now = serverTimeMs ?: System.currentTimeMillis()
     val remainingMs = expiresAtMs - now
-    if (remainingMs <= 0) return "Key expire ho chuki hai."
+    if (remainingMs <= 0) return "Key has expired."
     val days = (remainingMs / (24 * 3600 * 1000L)).toInt()
     val hours = (remainingMs / (3600 * 1000L)).toInt()
     return when {
-        days == 0 -> if (hours <= 1) "Ab 1 ghante me expire hogi." else "Ab $hours ghante bache hain."
-        days == 1 -> "Ab kal expire hogi."
-        else -> "Ab $days din ka access hai."
+        days == 0 -> if (hours <= 1) "Expires in 1 hour." else "$hours hours remaining."
+        days == 1 -> "Expires tomorrow."
+        else -> "$days days of access remaining."
     }
 }

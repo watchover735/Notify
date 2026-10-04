@@ -135,7 +135,7 @@ fun OtpScreen(
 
             Spacer(modifier = Modifier.height(28.dp))
 
-            // Info banner (e.g. "Code dobara bhej diya gaya hai")
+            // Info banner (e.g. "Verification code has been resent")
             AnimatedVisibility(
                 visible = !infoMessage.isNullOrBlank() && errorMessage.isNullOrBlank(),
                 enter = fadeIn(),
@@ -311,7 +311,7 @@ fun OtpScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Change Email ("Email badlo")
+            // Change Email ("Change Email")
             TextButton(
                 onClick = {
                     focusManager.clearFocus()
@@ -322,7 +322,7 @@ fun OtpScreen(
                 enabled = !isLoading
             ) {
                 Text(
-                    text = "Email badlo",
+                    text = "Change Email",
                     color = if (!isLoading) Color(0xFF22E559) else TextTertiary,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.SemiBold

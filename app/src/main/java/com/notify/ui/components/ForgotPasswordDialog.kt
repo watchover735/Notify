@@ -105,7 +105,7 @@ fun ForgotPasswordDialog(
     fun handleSendRecovery() {
         val cleanEmail = emailInput.trim()
         if (cleanEmail.isBlank()) {
-            errorMessage = "Email enter karein"
+            errorMessage = "Please enter your email"
             return
         }
         focusManager.clearFocus()
@@ -118,9 +118,9 @@ fun ForgotPasswordDialog(
             isLoading = false
             if (res.isSuccess) {
                 step = 2
-                infoMessage = "Agar ye email registered hai to recovery code bhej diya gaya hai"
+                infoMessage = "If this email is registered, a recovery code has been sent"
             } else {
-                errorMessage = res.exceptionOrNull()?.message ?: "Recovery request fail ho gayi"
+                errorMessage = res.exceptionOrNull()?.message ?: "Recovery request failed"
             }
         }
     }
@@ -128,15 +128,15 @@ fun ForgotPasswordDialog(
     fun handleReset() {
         val cleanCode = codeInput.trim()
         if (cleanCode.isBlank()) {
-            errorMessage = "Verification code enter karein"
+            errorMessage = "Please enter the verification code"
             return
         }
         if (newPassword.length < 6) {
-            errorMessage = "Password kam se kam 6 characters ka hona chahiye"
+            errorMessage = "Password must be at least 6 characters"
             return
         }
         if (newPassword != confirmPassword) {
-            errorMessage = "Naya password aur confirm password match nahi karte"
+            errorMessage = "New password and confirm password do not match"
             return
         }
 
@@ -267,7 +267,7 @@ fun ForgotPasswordDialog(
 
                 if (step == 1) {
                     Text(
-                        text = "Apna registered email enter karein. Password reset code aapko email par bheja jayega.",
+                        text = "Enter your registered email address. A password reset code will be sent to your email.",
                         fontSize = 13.sp,
                         color = TextSecondary,
                         textAlign = TextAlign.Start,
@@ -343,7 +343,7 @@ fun ForgotPasswordDialog(
                 } else {
                     // Step 2: Enter code & new password
                     Text(
-                        text = "Recovery code aapke email par bheja gaya hai. Naya password set karein:",
+                        text = "A recovery code has been sent to your email. Set your new password:",
                         fontSize = 13.sp,
                         color = TextSecondary,
                         textAlign = TextAlign.Start,
@@ -490,7 +490,7 @@ fun ForgotPasswordDialog(
                     }
 
                     Text(
-                        text = "Code nahi mila? Admin se contact karein",
+                        text = "Didn't receive the code? Contact admin",
                         color = TextSecondary.copy(alpha = 0.7f),
                         fontSize = 11.sp,
                         textAlign = TextAlign.Center,

@@ -148,7 +148,7 @@ internal fun parseVerifyResponse(code: Int, body: String): VerifyOtpResult {
             val session = parseSessionJson(body)
             VerifyOtpResult.Success(session)
         } catch (e: Exception) {
-            VerifyOtpResult.Unknown("Session parse karne me dikkat aayi: ${e.message}")
+            VerifyOtpResult.Unknown("Failed to parse session: ${e.message}")
         }
     }
     if (code == 429) {
@@ -202,7 +202,7 @@ internal fun parseResendResponse(code: Int, body: String): ResendOtpResult {
                 extractJsonString(body, "error_description")
             }
         }
-        ResendOtpResult.Unknown(msg.ifEmpty { "OTP bhejne me dikkat aayi" })
+        ResendOtpResult.Unknown(msg.ifEmpty { "Failed to send OTP" })
     }
 }
 
@@ -318,7 +318,7 @@ class SupabaseAuthRepository(
                             return@withContext SignInResult.NeedOtp(email.trim())
                         }
 
-                        val errorMsg = parseErrorMessage(body, "Email ya password galat hai")
+                        val errorMsg = parseErrorMessage(body, "Invalid email or password")
                         return@withContext SignInResult.Error(errorMsg)
                     }
 
@@ -328,10 +328,10 @@ class SupabaseAuthRepository(
                 }
             } catch (e: java.net.SocketTimeoutException) {
                 Log.w(TAG, "Timeout during sign in", e)
-                return@withContext SignInResult.Error("Server respond nahi kar raha. Dobara try karein")
+                return@withContext SignInResult.Error("Server is not responding. Please try again")
             } catch (e: IOException) {
                 Log.w(TAG, "Network error during sign in", e)
-                return@withContext SignInResult.Error("Internet check karein aur dobara try karein")
+                return@withContext SignInResult.Error("Please check your internet connection and try again")
             } catch (e: Exception) {
                 Log.e(TAG, "Sign in failed", e)
                 return@withContext SignInResult.Error(e.message ?: "Sign in failed")
@@ -362,7 +362,7 @@ class SupabaseAuthRepository(
                 client.newCall(request).execute().use { response ->
                     val body = response.body?.string().orEmpty()
                     if (!response.isSuccessful) {
-                        val errorMsg = parseErrorMessage(body, "Sign up fail ho gaya. Kripya dobara koshish karein")
+                        val errorMsg = parseErrorMessage(body, "Sign up failed. Please try again")
                         return@withContext SignUpResult.Error(errorMsg)
                     }
 
@@ -380,7 +380,7 @@ class SupabaseAuthRepository(
                         ?: jsonObj.optJSONObject("user")?.optJSONArray("identities")
                     if (identitiesArray != null && identitiesArray.length() == 0) {
                         Log.i(TAG, "Sign up email already registered (empty identities) for ${maskEmail(email)}")
-                        return@withContext SignUpResult.Error("Ye email pehle se registered hai. Sign In karein")
+                        return@withContext SignUpResult.Error("This email is already registered. Please sign in")
                     }
 
                     Log.i(TAG, "Sign up succeeded, awaiting email OTP for ${maskEmail(email)}")
@@ -388,10 +388,10 @@ class SupabaseAuthRepository(
                 }
             } catch (e: java.net.SocketTimeoutException) {
                 Log.w(TAG, "Timeout during sign up", e)
-                return@withContext SignUpResult.Error("Server respond nahi kar raha. Dobara try karein")
+                return@withContext SignUpResult.Error("Server is not responding. Please try again")
             } catch (e: IOException) {
                 Log.w(TAG, "Network error during sign up", e)
-                return@withContext SignUpResult.Error("Internet check karein aur dobara try karein")
+                return@withContext SignUpResult.Error("Please check your internet connection and try again")
             } catch (e: Exception) {
                 Log.e(TAG, "Sign up failed", e)
                 return@withContext SignUpResult.Error(e.message ?: "Sign up failed")
@@ -481,18 +481,18 @@ class SupabaseAuthRepository(
             client.newCall(request).execute().use { response ->
                 val body = response.body?.string().orEmpty()
                 if (response.code == 429) {
-                    return@withContext Result.failure(Exception("Email limit reach ho gayi. Kripya baad me try karein"))
+                    return@withContext Result.failure(Exception("Email limit reached. Please try again later"))
                 }
                 if (response.code in 500..599) {
-                    return@withContext Result.failure(Exception("Server error. Kripya baad me try karein"))
+                    return@withContext Result.failure(Exception("Server error. Please try again later"))
                 }
                 // Return success to prevent email enumeration
                 return@withContext Result.success(Unit)
             }
         } catch (e: java.net.SocketTimeoutException) {
-            return@withContext Result.failure(Exception("Server respond nahi kar raha. Dobara try karein"))
+            return@withContext Result.failure(Exception("Server is not responding. Please try again"))
         } catch (e: IOException) {
-            return@withContext Result.failure(Exception("Internet check karein aur dobara try karein"))
+            return@withContext Result.failure(Exception("Please check your internet connection and try again"))
         } catch (e: Exception) {
             return@withContext Result.failure(e)
         }
@@ -564,7 +564,7 @@ class SupabaseAuthRepository(
                 }
             } catch (e: IOException) {
                 Log.w(TAG, "Network error during Google Sign-In", e)
-                return@withContext Result.failure(Exception("Internet check karein aur dobara try karein"))
+                return@withContext Result.failure(Exception("Please check your internet connection and try again"))
             } catch (e: Exception) {
                 Log.e(TAG, "Google Sign-In error", e)
                 return@withContext Result.failure(e)
@@ -621,15 +621,15 @@ class SupabaseAuthRepository(
                 client.newCall(request).execute().use { response ->
                     val body = response.body?.string().orEmpty()
                     if (!response.isSuccessful) {
-                        val errMsg = parseErrorMessage(body, "Password badalne me error aaya")
+                        val errMsg = parseErrorMessage(body, "Failed to update password")
                         return@withContext Result.failure(Exception(errMsg))
                     }
                     return@withContext Result.success(Unit)
                 }
             } catch (e: java.net.SocketTimeoutException) {
-                return@withContext Result.failure(Exception("Server respond nahi kar raha. Dobara try karein"))
+                return@withContext Result.failure(Exception("Server is not responding. Please try again"))
             } catch (e: IOException) {
-                return@withContext Result.failure(Exception("Internet check karein aur dobara try karein"))
+                return@withContext Result.failure(Exception("Please check your internet connection and try again"))
             } catch (e: Exception) {
                 return@withContext Result.failure(e)
             }
@@ -737,15 +737,15 @@ class SupabaseAuthRepository(
         val lower = desc.lowercase()
         return when {
             lower.contains("invalid login credentials") || lower.contains("invalid grant") ->
-                "Email ya password galat hai"
+                "Invalid email or password"
             lower.contains("user already registered") || lower.contains("email already exists") ->
-                "Ye email pehle se registered hai. Sign In karein"
+                "This email is already registered. Please sign in"
             lower.contains("password should be at least") || lower.contains("weak password") ->
-                "Password kam se kam 6 characters ka hona chahiye"
+                "Password must be at least 6 characters"
             lower.contains("email not confirmed") ->
-                "Email confirm nahi hua hai"
+                "Email has not been confirmed"
             lower.contains("invalid email") ->
-                "Email address galat format me hai"
+                "Invalid email address format"
             else -> desc
         }
     }

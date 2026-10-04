@@ -23,7 +23,7 @@ class GoogleAuthManager(private val context: Context) {
         val serverClientId = SupabaseConfig.GOOGLE_WEB_CLIENT_ID
         if (serverClientId.isBlank() || serverClientId.startsWith("YOUR_GOOGLE_WEB_CLIENT_ID")) {
             return Result.failure(
-                IllegalStateException("Google Web Client ID configure nahi hai. SETUP.md dekhein.")
+                IllegalStateException("Google Web Client ID is not configured. See SETUP.md.")
             )
         }
 
@@ -50,18 +50,18 @@ class GoogleAuthManager(private val context: Context) {
             if (idToken.isNotBlank()) {
                 Result.success(idToken)
             } else {
-                Result.failure(Exception("Google ID token khali mila"))
+                Result.failure(Exception("Empty Google ID token received"))
             }
         } catch (e: GetCredentialCancellationException) {
             Log.w(TAG, "User cancelled Google Sign-In dialog")
-            Result.failure(Exception("Sign-In cancel ho gaya"))
+            Result.failure(Exception("Sign-in was cancelled"))
         } catch (e: GetCredentialException) {
             Log.e(TAG, "Credential Manager error: ${e.type}", e)
             val userMsg = when {
                 e.type.contains("NoCredentialException", ignoreCase = true) ->
-                    "Device par koi Google account nahi mila"
+                    "No Google account found on device"
                 e.type.contains("Interrupted", ignoreCase = true) ->
-                    "Sign-In interrupt ho gaya, dobara try karein"
+                    "Sign-in was interrupted. Please try again"
                 else -> "Google Sign-In failed (${e.message ?: e.type})"
             }
             Result.failure(Exception(userMsg))

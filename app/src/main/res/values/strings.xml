@@ -8,5 +8,5 @@
     <string name="otp_subtitle">Email</string>
     <string name="otp_verify_button">Verify Code</string>
     <string name="otp_resend_button">Resend Code</string>
-    <string name="otp_change_email">Email badlo</string>
+    <string name="otp_change_email">Change Email</string>
 </resources>

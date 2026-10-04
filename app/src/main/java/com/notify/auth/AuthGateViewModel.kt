@@ -148,7 +148,7 @@ class AuthGateViewModel(application: Application) : AndroidViewModel(application
             } else {
                 // No cached nickname AND network failure -> show error with retry
                 _gateState.value = AuthGateState.Error(
-                    message = "Internet connection check karein",
+                    message = "Please check your internet connection",
                     onRetry = { checkInitialAuthState() }
                 )
                 return
@@ -166,19 +166,19 @@ class AuthGateViewModel(application: Application) : AndroidViewModel(application
                 }
                 "expired" -> {
                     _gateState.value = AuthGateState.NeedKey(
-                        message = "Key expire ho gayi",
+                        message = "Key has expired",
                         isError = true
                     )
                 }
                 "revoked" -> {
                     _gateState.value = AuthGateState.NeedKey(
-                        message = "Key revoke kar di gayi. Admin se contact karo",
+                        message = "Key has been revoked. Please contact admin",
                         isError = true
                     )
                 }
                 else -> {
                     _gateState.value = AuthGateState.NeedKey(
-                        message = "Apna access key enter karein",
+                        message = "Please enter your access key",
                         isError = false
                     )
                 }
@@ -192,7 +192,7 @@ class AuthGateViewModel(application: Application) : AndroidViewModel(application
                 startLiveExpiryChecks(cached.expiresAtEpochMs)
             } else {
                 _gateState.value = AuthGateState.Error(
-                    message = "Access verify nahi ho saka. Internet check karein.",
+                    message = "Could not verify access. Please check your internet connection.",
                     onRetry = { checkInitialAuthState() }
                 )
             }
@@ -274,7 +274,7 @@ class AuthGateViewModel(application: Application) : AndroidViewModel(application
                         onPausePlayback?.invoke()
                         stopLiveExpiryChecks()
                         _gateState.value = AuthGateState.NeedKey(
-                            message = "Key revoke kar di gayi. Admin se contact karo",
+                            message = "Key has been revoked. Please contact admin",
                             isError = true
                         )
                     }
@@ -283,7 +283,7 @@ class AuthGateViewModel(application: Application) : AndroidViewModel(application
                         onPausePlayback?.invoke()
                         stopLiveExpiryChecks()
                         _gateState.value = AuthGateState.NeedKey(
-                            message = "Key expire ho gayi",
+                            message = "Key has expired",
                             isError = true
                         )
                     }
@@ -292,7 +292,7 @@ class AuthGateViewModel(application: Application) : AndroidViewModel(application
                     }
                 }
             } else {
-                // Failure mode: Network error or timeout ko KABHI "expired" nahi maanna.
+                // Failure mode: NEVER treat network error or timeout as "expired".
                 // UNLESS offline and monotonic estimated server time has exceeded cached expires_at:
                 val cached = profileAndKeyRepository.getCachedEntitlement()
                 if (cached != null && cached.expiresAtEpochMs != null) {
@@ -302,7 +302,7 @@ class AuthGateViewModel(application: Application) : AndroidViewModel(application
                         onPausePlayback?.invoke()
                         stopLiveExpiryChecks()
                         _gateState.value = AuthGateState.NeedKey(
-                            message = "Key expire ho gayi",
+                            message = "Key has expired",
                             isError = true
                         )
                     }
@@ -394,7 +394,7 @@ class AuthGateViewModel(application: Application) : AndroidViewModel(application
     }
 
     /**
-     * Called when the user clicks "Update karo" in the soft update dialog.
+     * Called when the user clicks "Update Now" in the soft update dialog.
      */
     fun onAcceptSoftUpdate() {
         hasDismissedSoftDialogThisSession = true
@@ -432,7 +432,7 @@ class AuthGateViewModel(application: Application) : AndroidViewModel(application
                         // User exists with unconfirmed email. Transition to NeedEmailOtp without auto-resend.
                         _gateState.value = AuthGateState.NeedEmailOtp(
                             email = res.email,
-                            message = "Pehle apna email OTP se verify karein"
+                            message = "Please verify your email with OTP first"
                         )
                     }
                     is SignInResult.Error -> {
@@ -463,7 +463,7 @@ class AuthGateViewModel(application: Application) : AndroidViewModel(application
                         startResendCooldown(60)
                         _gateState.value = AuthGateState.NeedEmailOtp(
                             email = res.email,
-                            message = "Verification code aapke email par bheja gaya hai"
+                            message = "Verification code has been sent to your email"
                         )
                     }
                     is SignUpResult.Error -> {
@@ -494,42 +494,42 @@ class AuthGateViewModel(application: Application) : AndroidViewModel(application
                     }
                     is VerifyOtpResult.OtpInvalidOrExpired -> {
                         _gateState.value = curr.copy(
-                            error = "Code galat ya expire ho gaya",
+                            error = "Invalid or expired code",
                             message = null,
                             isLoading = false
                         )
                     }
                     is VerifyOtpResult.RateLimited -> {
                         _gateState.value = curr.copy(
-                            error = "Thodi der baad try karo",
+                            error = "Too many requests. Please try again later",
                             message = null,
                             isLoading = false
                         )
                     }
                     is VerifyOtpResult.Offline -> {
                         _gateState.value = curr.copy(
-                            error = "Internet connection check karein",
+                            error = "Please check your internet connection",
                             message = null,
                             isLoading = false
                         )
                     }
                     is VerifyOtpResult.Timeout -> {
                         _gateState.value = curr.copy(
-                            error = "Server respond nahi kar raha. Dobara try karein",
+                            error = "Server is not responding. Please try again",
                             message = null,
                             isLoading = false
                         )
                     }
                     is VerifyOtpResult.Server5xx -> {
                         _gateState.value = curr.copy(
-                            error = "Server me dikkat hai (HTTP ${res.code}). Thodi der baad try karein",
+                            error = "Server error (HTTP ${res.code}). Please try again later",
                             message = null,
                             isLoading = false
                         )
                     }
                     is VerifyOtpResult.Unknown -> {
                         _gateState.value = curr.copy(
-                            error = res.message.ifEmpty { "Verification fail ho gaya" },
+                            error = res.message.ifEmpty { "Verification failed" },
                             message = null,
                             isLoading = false
                         )
@@ -554,7 +554,7 @@ class AuthGateViewModel(application: Application) : AndroidViewModel(application
                     is ResendOtpResult.Success -> {
                         startResendCooldown(60)
                         _gateState.value = curr.copy(
-                            message = "Code dobara bhej diya gaya hai",
+                            message = "Code resent successfully",
                             error = null,
                             isLoading = false
                         )
@@ -562,35 +562,35 @@ class AuthGateViewModel(application: Application) : AndroidViewModel(application
                     is ResendOtpResult.RateLimited -> {
                         startResendCooldown(60)
                         _gateState.value = curr.copy(
-                            error = "Thodi der baad try karo",
+                            error = "Too many requests. Please try again later",
                             message = null,
                             isLoading = false
                         )
                     }
                     is ResendOtpResult.Offline -> {
                         _gateState.value = curr.copy(
-                            error = "Internet connection check karein",
+                            error = "Please check your internet connection",
                             message = null,
                             isLoading = false
                         )
                     }
                     is ResendOtpResult.Timeout -> {
                         _gateState.value = curr.copy(
-                            error = "Server respond nahi kar raha. Dobara try karein",
+                            error = "Server is not responding. Please try again",
                             message = null,
                             isLoading = false
                         )
                     }
                     is ResendOtpResult.Server5xx -> {
                         _gateState.value = curr.copy(
-                            error = "Server me dikkat hai (HTTP ${res.code}). Thodi der baad try karein",
+                            error = "Server error (HTTP ${res.code}). Please try again later",
                             message = null,
                             isLoading = false
                         )
                     }
                     is ResendOtpResult.Unknown -> {
                         _gateState.value = curr.copy(
-                            error = res.message.ifEmpty { "OTP bhejne me dikkat aayi" },
+                            error = res.message.ifEmpty { "Failed to send OTP" },
                             message = null,
                             isLoading = false
                         )
@@ -708,7 +708,7 @@ class AuthGateViewModel(application: Application) : AndroidViewModel(application
                     }
                 } else {
                     _gateState.value = AuthGateState.NeedKey(
-                        message = res.exceptionOrNull()?.message ?: "Key verify karne me error",
+                        message = res.exceptionOrNull()?.message ?: "Error verifying key",
                         isError = true,
                         isLoading = false
                     )
@@ -759,9 +759,9 @@ class AuthGateViewModel(application: Application) : AndroidViewModel(application
         val days = (remainingMs / (24 * 3600 * 1000L)).toInt()
         val hours = (remainingMs / (3600 * 1000L)).toInt()
         return when {
-            days == 0 -> if (hours <= 1) "Key: 1 ghante me expire hogi" else "Key: $hours ghante bache"
-            days == 1 -> "Key: Kal expire hogi"
-            else -> "Key: $days din bache"
+            days == 0 -> if (hours <= 1) "Key: Expires in 1 hour" else "Key: $hours hours left"
+            days == 1 -> "Key: Expires tomorrow"
+            else -> "Key: $days days left"
         }
     }
 
@@ -790,21 +790,21 @@ class AuthGateViewModel(application: Application) : AndroidViewModel(application
         confirmPass: String
     ): ChangePasswordResult {
         if (currentPass.isBlank()) {
-            return ChangePasswordResult.Error("Purana password enter karein")
+            return ChangePasswordResult.Error("Please enter your current password")
         }
         if (newPass.length < 6) {
-            return ChangePasswordResult.Error("Password kam se kam 6 characters ka hona chahiye")
+            return ChangePasswordResult.Error("Password must be at least 6 characters")
         }
         if (newPass != confirmPass) {
-            return ChangePasswordResult.Error("Naya password aur confirm password match nahi karte")
+            return ChangePasswordResult.Error("New password and confirm password do not match")
         }
         if (newPass == currentPass) {
-            return ChangePasswordResult.Error("Naya password purane password se alag hona chahiye")
+            return ChangePasswordResult.Error("New password must be different from current password")
         }
 
         val email = getStoredEmail()
         if (email.isBlank()) {
-            return ChangePasswordResult.Error("User email nahi mila")
+            return ChangePasswordResult.Error("User email not found")
         }
 
         // Verify current password via re-sign-in
@@ -814,14 +814,14 @@ class AuthGateViewModel(application: Application) : AndroidViewModel(application
                 return if (updateRes.isSuccess) {
                     ChangePasswordResult.Success
                 } else {
-                    ChangePasswordResult.Error(updateRes.exceptionOrNull()?.message ?: "Password badal nahi saka")
+                    ChangePasswordResult.Error(updateRes.exceptionOrNull()?.message ?: "Failed to change password")
                 }
             }
             is SignInResult.Error -> {
-                return ChangePasswordResult.Error("Purana password galat hai")
+                return ChangePasswordResult.Error("Incorrect current password")
             }
             is SignInResult.NeedOtp -> {
-                return ChangePasswordResult.Error("Email OTP verification pending hai")
+                return ChangePasswordResult.Error("Email verification is pending")
             }
         }
     }
@@ -834,7 +834,7 @@ class AuthGateViewModel(application: Application) : AndroidViewModel(application
     suspend fun sendPasswordRecovery(email: String): Result<Unit> {
         val cleanEmail = email.trim()
         if (cleanEmail.isBlank()) {
-            return Result.failure(Exception("Email enter karein"))
+            return Result.failure(Exception("Please enter your email"))
         }
         val res = authRepository.sendPasswordRecovery(cleanEmail)
         if (res.isSuccess) {
@@ -850,13 +850,13 @@ class AuthGateViewModel(application: Application) : AndroidViewModel(application
         confirmPass: String
     ): ResetPasswordResult {
         if (token.trim().length < 6) {
-            return ResetPasswordResult.Error("Verification code enter karein")
+            return ResetPasswordResult.Error("Please enter verification code")
         }
         if (newPass.length < 6) {
-            return ResetPasswordResult.Error("Password kam se kam 6 characters ka hona chahiye")
+            return ResetPasswordResult.Error("Password must be at least 6 characters")
         }
         if (newPass != confirmPass) {
-            return ResetPasswordResult.Error("Naya password aur confirm password match nahi karte")
+            return ResetPasswordResult.Error("New password and confirm password do not match")
         }
 
         when (val verifyRes = authRepository.verifyRecoveryOtp(email, token)) {
@@ -866,23 +866,23 @@ class AuthGateViewModel(application: Application) : AndroidViewModel(application
                     resolveProfileAndEntitlement(verifyRes.session)
                     ResetPasswordResult.Success
                 } else {
-                    ResetPasswordResult.Error(updateRes.exceptionOrNull()?.message ?: "Password set nahi ho saka")
+                    ResetPasswordResult.Error(updateRes.exceptionOrNull()?.message ?: "Failed to set new password")
                 }
             }
             is VerifyOtpResult.OtpInvalidOrExpired -> {
-                return ResetPasswordResult.Error("Code galat ya expire ho gaya")
+                return ResetPasswordResult.Error("Invalid or expired code")
             }
             is VerifyOtpResult.RateLimited -> {
-                return ResetPasswordResult.Error("Email limit hit ho gayi. Kripya baad me try karein")
+                return ResetPasswordResult.Error("Email limit reached. Please try again later")
             }
             is VerifyOtpResult.Offline -> {
-                return ResetPasswordResult.Error("Internet check karein aur dobara try karein")
+                return ResetPasswordResult.Error("Please check your internet connection and try again")
             }
             is VerifyOtpResult.Timeout -> {
-                return ResetPasswordResult.Error("Server respond nahi kar raha. Dobara try karein")
+                return ResetPasswordResult.Error("Server is not responding. Please try again")
             }
             is VerifyOtpResult.Server5xx -> {
-                return ResetPasswordResult.Error("Server error (${verifyRes.code}). Kripya thodi der baad try karein")
+                return ResetPasswordResult.Error("Server error (${verifyRes.code}). Please try again later")
             }
             is VerifyOtpResult.Unknown -> {
                 return ResetPasswordResult.Error(verifyRes.message)

@@ -379,7 +379,7 @@ fun NotiFyApp(
             onSubmit = { cur, new, conf -> authViewModel.changePassword(cur, new, conf) },
             onSuccess = {
                 showChangePasswordDialog = false
-                snackbarMessage = "Password badal gaya"
+                snackbarMessage = "Password updated successfully"
             }
         )
     }
@@ -397,7 +397,7 @@ fun NotiFyApp(
             },
             text = {
                 Text(
-                    text = "Kya aap NotiFy se logout karna chahte hain?",
+                    text = "Are you sure you want to log out of NotiFy?",
                     color = TextSecondary,
                     fontSize = 14.sp
                 )
@@ -410,14 +410,14 @@ fun NotiFyApp(
                         authViewModel.logout()
                     }
                 ) {
-                    Text(text = "Haan, Logout", color = ErrorRed, fontWeight = FontWeight.Bold)
+                    Text(text = "Logout", color = ErrorRed, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
                 TextButton(
                     onClick = { showLogoutConfirmDialog = false }
                 ) {
-                    Text(text = "Nahi", color = TextSecondary)
+                    Text(text = "Cancel", color = TextSecondary)
                 }
             }
         )

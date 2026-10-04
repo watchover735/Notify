@@ -286,7 +286,7 @@ fun KeyEntryScreen(
                     openWhatsApp(
                         context = context,
                         phone = DeveloperConfig.WHATSAPP_NUMBER,
-                        message = "Hi, mujhe NotiFy access key chahiye"
+                        message = "Hello, I need an access key for NotiFy"
                     )
                 }
             ) {

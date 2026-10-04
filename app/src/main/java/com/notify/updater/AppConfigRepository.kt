@@ -68,7 +68,7 @@ class AppConfigRepository(
         val minSupported = prefs.getInt(KEY_MIN_SUPPORTED_VERSION_CODE, BuildConfig.VERSION_CODE)
         val maxSkips = prefs.getInt(KEY_MAX_SKIPS, 3)
         val forceMessage = prefs.getString(KEY_FORCE_MESSAGE, null)
-            ?: "NotiFy ka naya update zaroori hai. Kripya app update karein."
+            ?: "A critical update is required to continue using NotiFy. Please update to the latest version."
         val downloadUrl = prefs.getString(KEY_DOWNLOAD_URL, null)
         val fetchedAtMs = prefs.getLong(KEY_FETCHED_AT_MS, 0L)
 
@@ -143,7 +143,7 @@ class AppConfigRepository(
                 val maxSkips = json.optInt("max_skips", 3)
                 val forceMessage = json.optString(
                     "force_message",
-                    "NotiFy ka naya update zaroori hai. Kripya app update karein."
+                    "A critical update is required to continue using NotiFy. Please update to the latest version."
                 )
                 val downloadUrl = if (!json.isNull("download_url")) json.optString("download_url") else null
 

@@ -98,19 +98,19 @@ fun ChangePasswordDialog(
         errorMessage = null
 
         if (currentPassword.isBlank()) {
-            errorMessage = "Purana password enter karein"
+            errorMessage = "Please enter your current password"
             return
         }
         if (newPassword.length < 6) {
-            errorMessage = "Naya password kam se kam 6 characters ka hona chahiye"
+            errorMessage = "New password must be at least 6 characters"
             return
         }
         if (newPassword != confirmPassword) {
-            errorMessage = "Naya password aur confirm password match nahi karte"
+            errorMessage = "New password and confirm password do not match"
             return
         }
         if (newPassword == currentPassword) {
-            errorMessage = "Naya password purane password se alag hona chahiye"
+            errorMessage = "New password must be different from current password"
             return
         }
 

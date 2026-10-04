@@ -139,7 +139,7 @@ class SupabaseProfileAndKeyRepository(
                 val body = response.body?.string().orEmpty()
                 if (!response.isSuccessful) {
                     Log.e(TAG, "saveProfileNickname failed: HTTP ${response.code} $body")
-                    return@withContext Result.failure(Exception("Nickname save fail ho gaya (${response.code})"))
+                    return@withContext Result.failure(Exception("Failed to save nickname (${response.code})"))
                 }
 
                 saveCachedNickname(trimmed)
@@ -147,7 +147,7 @@ class SupabaseProfileAndKeyRepository(
             }
         } catch (e: IOException) {
             Log.w(TAG, "Network error saving nickname", e)
-            return@withContext Result.failure(Exception("Internet connection check karein"))
+            return@withContext Result.failure(Exception("Please check your internet connection"))
         } catch (e: Exception) {
             Log.e(TAG, "Error saving nickname", e)
             return@withContext Result.failure(e)
@@ -277,7 +277,7 @@ class SupabaseProfileAndKeyRepository(
                 }
             } catch (e: IOException) {
                 Log.w(TAG, "Network error during redeem_key", e)
-                return@withContext Result.failure(Exception("Internet check karein aur dobara try karein"))
+                return@withContext Result.failure(Exception("Please check your internet connection and try again"))
             } catch (e: Exception) {
                 Log.e(TAG, "Error during redeem_key", e)
                 return@withContext Result.failure(e)
