@@ -4,4 +4,9 @@
     <string name="welcome_subtitle">Personal-Use Android Music Player</string>
     <string name="phase_status">Phase 0: Toolchain &amp; Baseline Setup</string>
     <string name="status_ready">Toolchain Verified &amp; Active</string>
+    <string name="otp_title">Verify</string>
+    <string name="otp_subtitle">Email</string>
+    <string name="otp_verify_button">Verify Code</string>
+    <string name="otp_resend_button">Resend Code</string>
+    <string name="otp_change_email">Email badlo</string>
 </resources>

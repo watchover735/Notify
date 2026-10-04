@@ -96,7 +96,24 @@ fun AuthGate(
             }
 
             AuthGateScreenKey.NeedEmailOtp -> {
-                // Handled in Commit B1 (OtpScreen)
+                BackHandler {
+                    viewModel.backToLogin()
+                }
+                val otpState = gateState as? AuthGateState.NeedEmailOtp
+                val cooldown by viewModel.resendCooldownSeconds.collectAsState()
+                if (otpState != null) {
+                    OtpScreen(
+                        email = otpState.email,
+                        isLoading = otpState.isLoading,
+                        errorMessage = otpState.error,
+                        infoMessage = otpState.message,
+                        cooldownSeconds = cooldown,
+                        onVerify = { code -> viewModel.verifyEmailOtp(otpState.email, code) },
+                        onResend = { viewModel.resendEmailOtp(otpState.email) },
+                        onChangeEmail = { viewModel.backToLogin() },
+                        onDismissError = { viewModel.dismissError() }
+                    )
+                }
             }
 
             AuthGateScreenKey.NeedNickname -> {

@@ -5,6 +5,8 @@ import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.notify.core.preferences.UserProfilePreferences
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -41,11 +43,27 @@ class AuthGateViewModel(application: Application) : AndroidViewModel(application
     private val _gateState = MutableStateFlow<AuthGateState>(AuthGateState.Loading)
     val gateState: StateFlow<AuthGateState> = _gateState.asStateFlow()
 
+    private val _resendCooldownSeconds = MutableStateFlow(0)
+    val resendCooldownSeconds: StateFlow<Int> = _resendCooldownSeconds.asStateFlow()
+    private var cooldownJob: Job? = null
+
     // Flag to prevent double-tap submissions
     private var isSubmitting = false
 
     init {
         checkInitialAuthState()
+    }
+
+    private fun startResendCooldown(seconds: Int = 60) {
+        cooldownJob?.cancel()
+        cooldownJob = viewModelScope.launch {
+            for (i in seconds downTo 0) {
+                _resendCooldownSeconds.value = i
+                if (i > 0) {
+                    delay(1000L)
+                }
+            }
+        }
     }
 
     fun checkInitialAuthState() {
@@ -175,15 +193,23 @@ class AuthGateViewModel(application: Application) : AndroidViewModel(application
 
         viewModelScope.launch {
             try {
-                val res = authRepository.signInWithEmail(email, pass)
-                if (res.isSuccess) {
-                    val session = res.getOrThrow()
-                    resolveProfileAndEntitlement(session)
-                } else {
-                    _gateState.value = AuthGateState.NeedLogin(
-                        error = res.exceptionOrNull()?.message ?: "Login failed",
-                        isLoading = false
-                    )
+                when (val res = authRepository.signInWithEmail(email, pass)) {
+                    is SignInResult.Success -> {
+                        resolveProfileAndEntitlement(res.session)
+                    }
+                    is SignInResult.NeedOtp -> {
+                        // User exists with unconfirmed email. Transition to NeedEmailOtp without auto-resend.
+                        _gateState.value = AuthGateState.NeedEmailOtp(
+                            email = res.email,
+                            message = "Pehle apna email OTP se verify karein"
+                        )
+                    }
+                    is SignInResult.Error -> {
+                        _gateState.value = AuthGateState.NeedLogin(
+                            error = res.message,
+                            isLoading = false
+                        )
+                    }
                 }
             } finally {
                 isSubmitting = false
@@ -198,20 +224,157 @@ class AuthGateViewModel(application: Application) : AndroidViewModel(application
 
         viewModelScope.launch {
             try {
-                val res = authRepository.signUpWithEmail(email, pass)
-                if (res.isSuccess) {
-                    val session = res.getOrThrow()
-                    resolveProfileAndEntitlement(session)
-                } else {
-                    _gateState.value = AuthGateState.NeedLogin(
-                        error = res.exceptionOrNull()?.message ?: "Sign up failed",
-                        isLoading = false
-                    )
+                when (val res = authRepository.signUpWithEmail(email, pass)) {
+                    is SignUpResult.Success -> {
+                        resolveProfileAndEntitlement(res.session)
+                    }
+                    is SignUpResult.NeedOtp -> {
+                        startResendCooldown(60)
+                        _gateState.value = AuthGateState.NeedEmailOtp(
+                            email = res.email,
+                            message = "Verification code aapke email par bheja gaya hai"
+                        )
+                    }
+                    is SignUpResult.Error -> {
+                        _gateState.value = AuthGateState.NeedLogin(
+                            error = res.message,
+                            isLoading = false
+                        )
+                    }
                 }
             } finally {
                 isSubmitting = false
             }
         }
+    }
+
+    fun verifyEmailOtp(email: String, token: String) {
+        if (isSubmitting) return
+        val curr = _gateState.value as? AuthGateState.NeedEmailOtp ?: return
+
+        isSubmitting = true
+        _gateState.value = curr.copy(isLoading = true, error = null, message = null)
+
+        viewModelScope.launch {
+            try {
+                when (val res = authRepository.verifyEmailOtp(email, token)) {
+                    is VerifyOtpResult.Success -> {
+                        resolveProfileAndEntitlement(res.session)
+                    }
+                    is VerifyOtpResult.OtpInvalidOrExpired -> {
+                        _gateState.value = curr.copy(
+                            error = "Code galat ya expire ho gaya",
+                            message = null,
+                            isLoading = false
+                        )
+                    }
+                    is VerifyOtpResult.RateLimited -> {
+                        _gateState.value = curr.copy(
+                            error = "Thodi der baad try karo",
+                            message = null,
+                            isLoading = false
+                        )
+                    }
+                    is VerifyOtpResult.Offline -> {
+                        _gateState.value = curr.copy(
+                            error = "Internet connection check karein",
+                            message = null,
+                            isLoading = false
+                        )
+                    }
+                    is VerifyOtpResult.Timeout -> {
+                        _gateState.value = curr.copy(
+                            error = "Server respond nahi kar raha. Dobara try karein",
+                            message = null,
+                            isLoading = false
+                        )
+                    }
+                    is VerifyOtpResult.Server5xx -> {
+                        _gateState.value = curr.copy(
+                            error = "Server me dikkat hai (HTTP ${res.code}). Thodi der baad try karein",
+                            message = null,
+                            isLoading = false
+                        )
+                    }
+                    is VerifyOtpResult.Unknown -> {
+                        _gateState.value = curr.copy(
+                            error = res.message.ifEmpty { "Verification fail ho gaya" },
+                            message = null,
+                            isLoading = false
+                        )
+                    }
+                }
+            } finally {
+                isSubmitting = false
+            }
+        }
+    }
+
+    fun resendEmailOtp(email: String) {
+        if (isSubmitting || _resendCooldownSeconds.value > 0) return
+        val curr = _gateState.value as? AuthGateState.NeedEmailOtp ?: return
+
+        isSubmitting = true
+        _gateState.value = curr.copy(isLoading = true, error = null, message = null)
+
+        viewModelScope.launch {
+            try {
+                when (val res = authRepository.resendEmailOtp(email)) {
+                    is ResendOtpResult.Success -> {
+                        startResendCooldown(60)
+                        _gateState.value = curr.copy(
+                            message = "Code dobara bhej diya gaya hai",
+                            error = null,
+                            isLoading = false
+                        )
+                    }
+                    is ResendOtpResult.RateLimited -> {
+                        startResendCooldown(60)
+                        _gateState.value = curr.copy(
+                            error = "Thodi der baad try karo",
+                            message = null,
+                            isLoading = false
+                        )
+                    }
+                    is ResendOtpResult.Offline -> {
+                        _gateState.value = curr.copy(
+                            error = "Internet connection check karein",
+                            message = null,
+                            isLoading = false
+                        )
+                    }
+                    is ResendOtpResult.Timeout -> {
+                        _gateState.value = curr.copy(
+                            error = "Server respond nahi kar raha. Dobara try karein",
+                            message = null,
+                            isLoading = false
+                        )
+                    }
+                    is ResendOtpResult.Server5xx -> {
+                        _gateState.value = curr.copy(
+                            error = "Server me dikkat hai (HTTP ${res.code}). Thodi der baad try karein",
+                            message = null,
+                            isLoading = false
+                        )
+                    }
+                    is ResendOtpResult.Unknown -> {
+                        _gateState.value = curr.copy(
+                            error = res.message.ifEmpty { "OTP bhejne me dikkat aayi" },
+                            message = null,
+                            isLoading = false
+                        )
+                    }
+                }
+            } finally {
+                isSubmitting = false
+            }
+        }
+    }
+
+    fun backToLogin() {
+        cooldownJob?.cancel()
+        _resendCooldownSeconds.value = 0
+        _gateState.value = AuthGateState.NeedLogin()
     }
 
     fun signInWithGoogle() {
