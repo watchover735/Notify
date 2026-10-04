@@ -97,7 +97,6 @@ class MainActivity : ComponentActivity() {
                         }
                     )
                 }
-                com.notify.updater.AppUpdateDialogHost()
             }
         }
     }
