@@ -88,6 +88,7 @@ class MainActivity : ComponentActivity() {
                     NotiFyApp(
                         libraryViewModel = libraryViewModel,
                         playbackViewModel = playbackViewModel,
+                        authViewModel = authViewModel,
                         onOpenSafPicker = {
                             safPickerLauncher.launch(arrayOf("audio/*"))
                         },

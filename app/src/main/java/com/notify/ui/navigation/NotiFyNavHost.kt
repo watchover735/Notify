@@ -71,6 +71,7 @@ fun NotiFyNavHost(
     onUpdateABStart: (Long) -> Unit = {},
     onUpdateABEnd: (Long) -> Unit = {},
     onDismissABRepeatError: () -> Unit = {},
+    onOpenProfileDrawer: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     NavHost(
@@ -96,7 +97,8 @@ fun NotiFyNavHost(
                 onPlayStream = onPlayStream,
                 onPlayStreamWithContext = onPlayStreamWithContext,
                 onPlayQueue = onPlayQueue,
-                onShuffleAll = onShuffleAll
+                onShuffleAll = onShuffleAll,
+                onOpenProfileDrawer = onOpenProfileDrawer
             )
         }
 

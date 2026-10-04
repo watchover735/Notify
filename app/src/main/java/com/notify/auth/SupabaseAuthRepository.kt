@@ -21,6 +21,7 @@ private const val KEY_REFRESH_TOKEN = "refresh_token"
 private const val KEY_EXPIRES_AT = "expires_at_epoch_sec"
 private const val KEY_USER_ID = "user_id"
 private const val KEY_USER_EMAIL = "user_email"
+private const val KEY_AUTH_PROVIDER = "auth_provider"
 
 sealed interface SignUpResult {
     data class Success(val session: SupabaseAuthSession) : SignUpResult
@@ -322,7 +323,7 @@ class SupabaseAuthRepository(
                     }
 
                     val session = parseSessionJson(body)
-                    saveSession(session)
+                    saveSession(session, provider = "email")
                     return@withContext SignInResult.Success(session)
                 }
             } catch (e: java.net.SocketTimeoutException) {
@@ -486,7 +487,7 @@ class SupabaseAuthRepository(
                     }
 
                     val session = parseSessionJson(body)
-                    saveSession(session)
+                    saveSession(session, provider = "google")
                     return@withContext Result.success(session)
                 }
             } catch (e: IOException) {
@@ -563,14 +564,43 @@ class SupabaseAuthRepository(
         )
     }
 
-    fun saveSession(session: SupabaseAuthSession) {
-        prefs.edit()
+    fun saveSession(session: SupabaseAuthSession, provider: String? = null) {
+        val editor = prefs.edit()
             .putString(KEY_ACCESS_TOKEN, session.accessToken)
             .putString(KEY_REFRESH_TOKEN, session.refreshToken)
             .putString(KEY_USER_ID, session.userId)
             .putString(KEY_USER_EMAIL, session.email)
             .putLong(KEY_EXPIRES_AT, session.expiresAtEpochSec)
-            .apply()
+        if (provider != null) {
+            editor.putString(KEY_AUTH_PROVIDER, provider)
+        }
+        editor.apply()
+    }
+
+    fun isGoogleUser(): Boolean {
+        val provider = prefs.getString(KEY_AUTH_PROVIDER, null)
+        if (provider == "google") return true
+        if (provider == "email") return false
+        val session = getStoredSession() ?: return false
+        return try {
+            val parts = session.accessToken.split(".")
+            if (parts.size >= 2) {
+                val decoded = safeBase64UrlDecode(parts[1])
+                val json = JSONObject(String(decoded, Charsets.UTF_8))
+                val appMeta = json.optJSONObject("app_metadata")
+                appMeta?.optString("provider") == "google"
+            } else false
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun safeBase64UrlDecode(input: String): ByteArray {
+        return try {
+            android.util.Base64.decode(input, android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING)
+        } catch (_: Throwable) {
+            java.util.Base64.getUrlDecoder().decode(input)
+        }
     }
 
     fun clearLocalSession() {

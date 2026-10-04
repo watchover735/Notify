@@ -2,6 +2,7 @@ package com.notify.ui.home
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -107,6 +108,7 @@ fun HomeScreen(
     },
     onPlayQueue: (List<Track>, Int) -> Unit = { _, _ -> },
     onShuffleAll: () -> Unit,
+    onOpenProfileDrawer: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     // Home ViewModel — manages filter chips, trending, artists, downloads, and playlists
@@ -169,19 +171,27 @@ fun HomeScreen(
                     }
                     Box(
                         modifier = Modifier
-                            .size(38.dp)
-                            .background(
-                                brush = Brush.linearGradient(listOf(EmeraldAccent, EmeraldLight)),
-                                shape = CircleShape
-                            ),
+                            .size(48.dp)
+                            .clip(CircleShape)
+                            .clickable(onClick = onOpenProfileDrawer),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(
-                            text = avatarInitial,
-                            color = Color.Black,
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.Bold
-                        )
+                        Box(
+                            modifier = Modifier
+                                .size(38.dp)
+                                .background(
+                                    brush = Brush.linearGradient(listOf(EmeraldAccent, EmeraldLight)),
+                                    shape = CircleShape
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = avatarInitial,
+                                color = Color.Black,
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
                     Spacer(modifier = Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {

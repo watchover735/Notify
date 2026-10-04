@@ -34,21 +34,40 @@ import com.notify.ui.components.NotiFySnackbar
 import com.notify.ui.navigation.NotiFyDestination
 import com.notify.ui.navigation.NotiFyNavHost
 import com.notify.ui.player.MiniPlayer
+import androidx.activity.compose.BackHandler
+import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.rememberDrawerState
+import androidx.compose.runtime.rememberCoroutineScope
+import com.notify.auth.AuthGateViewModel
+import com.notify.ui.components.ProfileDrawerSheet
 import com.notify.ui.theme.DarkBackground
 import com.notify.ui.theme.DarkSurface
 import com.notify.ui.theme.DarkSurfaceVariant
 import com.notify.ui.theme.EmeraldAccent
 import com.notify.ui.theme.TextPrimary
 import com.notify.ui.theme.TextSecondary
+import kotlinx.coroutines.launch
 
 @Composable
 fun NotiFyApp(
     libraryViewModel: LocalLibraryViewModel,
     playbackViewModel: PlaybackViewModel,
+    authViewModel: AuthGateViewModel? = null,
     onOpenSafPicker: () -> Unit = {},
     onRequestPermission: () -> Unit = {}
 ) {
     val context = LocalContext.current
+    val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
+    val coroutineScope = rememberCoroutineScope()
+
+    var showUpdateKeyDialog by remember { mutableStateOf(false) }
+    var showChangePasswordDialog by remember { mutableStateOf(false) }
+    var showLogoutConfirmDialog by remember { mutableStateOf(false) }
+
+    BackHandler(enabled = drawerState.isOpen) {
+        coroutineScope.launch { drawerState.close() }
+    }
     val playlistRepository = remember(context) {
         PlaylistRepository(NotiFyDatabase.getInstance(context.applicationContext))
     }
@@ -151,8 +170,43 @@ fun NotiFyApp(
         }
     }
 
-    Scaffold(
-        containerColor = DarkBackground,
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        gesturesEnabled = false,
+        drawerContent = {
+            val nickname = authViewModel?.getCachedNickname() ?: ""
+            val email = authViewModel?.getStoredEmail() ?: ""
+            val keyStatus = authViewModel?.getKeyStatusDescription() ?: "Key: Active"
+            val isGoogleUser = authViewModel?.isGoogleUser() ?: false
+            val versionName = remember {
+                try {
+                    context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: ""
+                } catch (_: Exception) { "" }
+            }
+
+            ProfileDrawerSheet(
+                nickname = nickname,
+                email = email,
+                keyStatusText = keyStatus,
+                isGoogleUser = isGoogleUser,
+                versionName = versionName,
+                onUpdateKeyClick = {
+                    coroutineScope.launch { drawerState.close() }
+                    showUpdateKeyDialog = true
+                },
+                onChangePasswordClick = {
+                    coroutineScope.launch { drawerState.close() }
+                    showChangePasswordDialog = true
+                },
+                onLogoutClick = {
+                    coroutineScope.launch { drawerState.close() }
+                    showLogoutConfirmDialog = true
+                }
+            )
+        }
+    ) {
+        Scaffold(
+            containerColor = DarkBackground,
         snackbarHost = {
             snackbarMessage?.let { msg ->
                 val (label, action) = snackbarAction ?: (null to null)
@@ -296,8 +350,12 @@ fun NotiFyApp(
                 onClearABRepeat = { playbackViewModel.clearABRepeat() },
                 onUpdateABStart = { startMs -> playbackViewModel.updateABStart(startMs) },
                 onUpdateABEnd = { endMs -> playbackViewModel.updateABEnd(endMs) },
-                onDismissABRepeatError = { playbackViewModel.dismissABRepeatError() }
+                onDismissABRepeatError = { playbackViewModel.dismissABRepeatError() },
+                onOpenProfileDrawer = {
+                    coroutineScope.launch { drawerState.open() }
+                }
             )
         }
+    }
     }
 }

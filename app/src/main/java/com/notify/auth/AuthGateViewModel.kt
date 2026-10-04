@@ -619,4 +619,37 @@ class AuthGateViewModel(application: Application) : AndroidViewModel(application
             _gateState.value = curr.copy(message = null)
         }
     }
+
+    fun getCachedNickname(): String {
+        return profileAndKeyRepository.getCachedNickname()
+            ?: userProfilePrefs.getDisplayName().takeIf { it.isNotBlank() }
+            ?: "NotiFy User"
+    }
+
+    fun getStoredEmail(): String {
+        return authRepository.getStoredSession()?.email.orEmpty()
+    }
+
+    fun isGoogleUser(): Boolean {
+        return authRepository.isGoogleUser()
+    }
+
+    fun getKeyStatusDescription(): String {
+        val info = profileAndKeyRepository.getCachedEntitlement() ?: return "Key: None"
+        if (info.expiresAtEpochMs == null) {
+            return "Key: Permanent"
+        }
+        val estimatedServerNow = profileAndKeyRepository.getEstimatedServerTimeMs()
+        val remainingMs = info.expiresAtEpochMs - estimatedServerNow
+        if (remainingMs <= 0) {
+            return "Key: Expired"
+        }
+        val days = (remainingMs / (24 * 3600 * 1000L)).toInt()
+        val hours = (remainingMs / (3600 * 1000L)).toInt()
+        return when {
+            days == 0 -> if (hours <= 1) "Key: 1 ghante me expire hogi" else "Key: $hours ghante bache"
+            days == 1 -> "Key: Kal expire hogi"
+            else -> "Key: $days din bache"
+        }
+    }
 }
