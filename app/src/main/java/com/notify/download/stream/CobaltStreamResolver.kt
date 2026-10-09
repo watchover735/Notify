@@ -12,6 +12,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import com.notify.auth.AuthRepository
 import org.json.JSONObject
 
 /**
@@ -24,7 +25,8 @@ class CobaltStreamResolver(
         .build(),
     private val timeoutMs: Long = 2500L,
     private val instanceUrl: String = SupabaseConfig.RESOLVE_COBALT_URL,
-    endpointUrl: String = instanceUrl
+    endpointUrl: String = instanceUrl,
+    private val authRepository: AuthRepository? = null
 ) {
     private val effectiveEndpoint = if (endpointUrl != SupabaseConfig.RESOLVE_COBALT_URL) endpointUrl else instanceUrl
 
@@ -64,6 +66,13 @@ class CobaltStreamResolver(
         val start = System.currentTimeMillis()
         Log.i(TAG, "COBALT_ATTEMPT_START url=\"$canonicalYoutubeUrl\"")
 
+        val token = authRepository?.getCurrentAccessToken()
+        if (token.isNullOrBlank()) {
+            val elapsed = System.currentTimeMillis() - start
+            Log.w(TAG, "COBALT_ATTEMPT_COMPLETE outcome=FAILED elapsedMs=$elapsed reason=unauthorized_no_token")
+            return@withContext Result.failure(IllegalStateException("Unauthorized: Active user session required"))
+        }
+
         try {
             withTimeout(timeoutMs) {
                 val payload = JSONObject().apply {
@@ -76,7 +85,7 @@ class CobaltStreamResolver(
                 val request = Request.Builder()
                     .url(effectiveEndpoint)
                     .addHeader("apikey", SupabaseConfig.ANON_KEY)
-                    .addHeader("Authorization", "Bearer ${SupabaseConfig.ANON_KEY}")
+                    .addHeader("Authorization", "Bearer $token")
                     .addHeader("Content-Type", "application/json")
                     .post(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
                     .build()

@@ -1,5 +1,6 @@
 package com.notify.playback
 
+import android.app.Application
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
@@ -1077,6 +1078,9 @@ class PlaybackQueueCoordinator(
     }
 
     override fun onIsPlayingChanged(isPlaying: Boolean) {
+        (context.applicationContext as? Application)?.let { app ->
+            com.notify.telemetry.UserTelemetryManager.getInstance(app).setMusicPlaying(isPlaying)
+        }
         if (isPlaying) {
             activeRequestId?.let { StartupMetricsLogger.onPlaying(it) }
         } else {

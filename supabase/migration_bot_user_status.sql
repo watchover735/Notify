@@ -1,56 +1,9 @@
 -- ============================================================================
--- NotiFy Supabase Schema: Telegram Admin Bot Support
--- Tables and functions for Telegram Bot Key Management & Audit Logging
--- IMPORTANT: Run this script in the Supabase SQL Editor.
--- Does NOT modify any existing tables or functions.
+-- Update admin_get_user_info and admin_get_stats for Telegram Bot User Status
+-- Safe & Idempotent
 -- ============================================================================
 
--- 1. processed_updates: Idempotency table to prevent duplicate Telegram webhooks
-CREATE TABLE IF NOT EXISTS public.processed_updates (
-    update_id BIGINT PRIMARY KEY,
-    processed_at TIMESTAMPTZ DEFAULT clock_timestamp()
-);
-
-ALTER TABLE public.processed_updates ENABLE ROW LEVEL SECURITY;
-REVOKE ALL ON public.processed_updates FROM PUBLIC, anon, authenticated;
-GRANT ALL ON public.processed_updates TO service_role;
-
--- 2. admin_log: Audit trail of all actions executed via the Telegram bot
--- Note: Keys are never logged in full, only the last 4 characters.
-CREATE TABLE IF NOT EXISTS public.admin_log (
-    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    action TEXT NOT NULL,
-    args JSONB,
-    telegram_user_id BIGINT NOT NULL,
-    created_at TIMESTAMPTZ DEFAULT clock_timestamp()
-);
-
-ALTER TABLE public.admin_log ENABLE ROW LEVEL SECURITY;
-REVOKE ALL ON public.admin_log FROM PUBLIC, anon, authenticated;
-GRANT ALL ON public.admin_log TO service_role;
-
--- 3. pending_confirmations: Temporary storage for interactive destructive confirmations
--- Enforces: 60-second expiration, single-execution idempotency, and Telegram 64-byte callback limit.
-CREATE TABLE IF NOT EXISTS public.pending_confirmations (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    action TEXT NOT NULL, -- 'revoke_key' | 'revoke_user'
-    target TEXT NOT NULL, -- key code or email
-    telegram_user_id BIGINT NOT NULL,
-    executed BOOLEAN DEFAULT false,
-    created_at TIMESTAMPTZ DEFAULT clock_timestamp()
-);
-
-ALTER TABLE public.pending_confirmations ENABLE ROW LEVEL SECURITY;
-REVOKE ALL ON public.pending_confirmations FROM PUBLIC, anon, authenticated;
-GRANT ALL ON public.pending_confirmations TO service_role;
-
--- Index for speedy confirmation lookup and expiration checks
-CREATE INDEX IF NOT EXISTS idx_pending_confirmations_lookup
-    ON public.pending_confirmations (id, executed, created_at);
-
-
--- 4. admin_get_user_info(p_email TEXT)
--- Retrieves comprehensive user status, profile, telemetry, inactivity, and cloud playlists.
+-- 1. admin_get_user_info: comprehensive user status including telemetry & playlists
 CREATE OR REPLACE FUNCTION public.admin_get_user_info(p_email TEXT)
 RETURNS JSONB
 LANGUAGE plpgsql
@@ -177,8 +130,7 @@ REVOKE ALL ON FUNCTION public.admin_get_user_info(TEXT) FROM PUBLIC, anon, authe
 GRANT EXECUTE ON FUNCTION public.admin_get_user_info(TEXT) TO service_role;
 
 
--- 5. admin_list_users(p_limit INT)
--- Lists recent users with their active keys, last seen time, and total active hours.
+-- 2. admin_list_users: list recent users with telemetry and key status
 CREATE OR REPLACE FUNCTION public.admin_list_users(p_limit INT DEFAULT 15)
 RETURNS JSONB
 LANGUAGE plpgsql
@@ -228,8 +180,7 @@ REVOKE ALL ON FUNCTION public.admin_list_users(INT) FROM PUBLIC, anon, authentic
 GRANT EXECUTE ON FUNCTION public.admin_list_users(INT) TO service_role;
 
 
--- 6. admin_get_stats()
--- Aggregates total, unused, active, expired, and revoked key counts plus DAU and cloud playlists.
+-- 3. admin_get_stats: enhanced stats with DAU and playlists
 CREATE OR REPLACE FUNCTION public.admin_get_stats()
 RETURNS JSONB
 LANGUAGE plpgsql

@@ -24,6 +24,7 @@ class NotiFyApplication : Application(), ImageLoaderFactory {
         super.onCreate()
         PlaybackQueueCoordinator.install(this)
         com.notify.core.playback.LocalArtworkStore.init(this)
+        com.notify.telemetry.UserTelemetryManager.getInstance(this).init()
 
         // Asynchronous, low-priority background backfill for existing downloaded songs
         CoroutineScope(Dispatchers.IO).launch {

@@ -291,11 +291,13 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         return trackMap.values.toList()
     }
 
+    private val authRepository = com.notify.auth.SupabaseAuthRepository(application)
+
     /** Resolver used for the JioSaavn→CDN race when a trending card is tapped. */
-    private val jioSaavnResolver = JioSaavnStreamResolver()
+    private val jioSaavnResolver = JioSaavnStreamResolver(authRepository = authRepository)
 
     /** SoundCloud fallback if JioSaavn edge function is temporarily unavailable. */
-    private val soundCloudResolver = SoundCloudStreamResolver()
+    private val soundCloudResolver = SoundCloudStreamResolver(authRepository = authRepository)
 
     /** InnerTube search: used concurrently to retrieve the real YouTube videoId for radio seeding. */
     private val innerTubeSearchProvider = InnerTubeYouTubeMusicSearchProvider()

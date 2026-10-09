@@ -182,7 +182,10 @@ class ParallelRacingResolverChainTest {
         assertFalse("Initially not demoted", CobaltStreamResolver.isDemoted())
 
         val resolver = CobaltStreamResolver(
-            instanceUrl = "https://127.0.0.1:9999/api/json" // Non-existent endpoint triggers immediate failure
+            instanceUrl = "https://127.0.0.1:9999/api/json", // Non-existent endpoint triggers immediate failure
+            authRepository = object : com.notify.auth.AuthRepository {
+                override fun getCurrentAccessToken(): String = "test_token"
+            }
         )
 
         // Attempt 1 fails

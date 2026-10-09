@@ -34,7 +34,11 @@ async function sendTelegramRequest(method: string, payload: Record<string, unkno
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
-    return await res.json();
+    const json = await res.json();
+    if (!res.ok || !json?.ok) {
+      console.error(`Telegram API error on ${method}: HTTP ${res.status}`, JSON.stringify(json));
+    }
+    return json;
   } catch (err) {
     console.error(`Telegram API error on ${method}:`, err);
     return null;
@@ -50,7 +54,19 @@ async function sendMessage(chatId: number | string, text: string, replyMarkup?: 
   if (replyMarkup) {
     payload.reply_markup = replyMarkup;
   }
-  return await sendTelegramRequest("sendMessage", payload);
+  const result = await sendTelegramRequest("sendMessage", payload);
+  if (!result || !result.ok) {
+    console.warn(`sendMessage with HTML failed (${result?.description}). Retrying without parse_mode...`);
+    const plainPayload: Record<string, unknown> = {
+      chat_id: chatId,
+      text: text.replace(/<[^>]+>/g, ""),
+    };
+    if (replyMarkup) {
+      plainPayload.reply_markup = replyMarkup;
+    }
+    return await sendTelegramRequest("sendMessage", plainPayload);
+  }
+  return result;
 }
 
 async function editMessageText(
@@ -68,7 +84,20 @@ async function editMessageText(
   if (replyMarkup !== undefined) {
     payload.reply_markup = replyMarkup;
   }
-  return await sendTelegramRequest("editMessageText", payload);
+  const result = await sendTelegramRequest("editMessageText", payload);
+  if (!result || !result.ok) {
+    console.warn(`editMessageText with HTML failed (${result?.description}). Retrying without parse_mode...`);
+    const plainPayload: Record<string, unknown> = {
+      chat_id: chatId,
+      message_id: messageId,
+      text: text.replace(/<[^>]+>/g, ""),
+    };
+    if (replyMarkup !== undefined) {
+      plainPayload.reply_markup = replyMarkup;
+    }
+    return await sendTelegramRequest("editMessageText", plainPayload);
+  }
+  return result;
 }
 
 async function answerCallbackQuery(callbackQueryId: string, text?: string): Promise<any> {
@@ -122,14 +151,18 @@ function getHelpText(): string {
   <i>Example:</i> <code>/extend user@example.com 30</code>
 
 • <code>/user &lt;email&gt;</code>
-  View user profile nickname, key status, and expiration.
+  View full user profile, key status, app usage time, last seen, and days inactive.
   <i>Example:</i> <code>/user user@example.com</code>
+
+• <code>/users [limit]</code>
+  List recent users with their active keys and last seen activity.
+  <i>Example:</i> <code>/users 10</code>
 
 • <code>/unused</code>
   List up to 20 unused keys with total count.
 
 • <code>/stats</code>
-  View system statistics (total, unused, active users, expired, revoked).
+  View system statistics (DAU today, total users, playlists, keys).
 
 • <code>/help</code>
   Show this command guide.`;
@@ -233,7 +266,7 @@ Deno.serve(async (req: Request) => {
       await handleMessage(supabase, update.message.text.trim(), senderId, chatId);
     }
   } catch (err: any) {
-    console.error("Unhandled error processing update:", err?.message || err);
+    console.error("Unhandled error processing update:", err?.message || err, err?.stack);
     if (chatId) {
       try {
         await sendMessage(
@@ -262,7 +295,8 @@ async function handleMessage(
   chatId: number
 ): Promise<void> {
   const parts = rawText.split(/\s+/);
-  const command = parts[0]?.toLowerCase() || "";
+  const command = (parts[0]?.toLowerCase() || "").split("@")[0];
+  console.log(`Processing command: "${command}" from admin: ${adminId}`);
 
   switch (command) {
     case "/start":
@@ -414,7 +448,7 @@ async function handleMessage(
         return;
       }
 
-      const email = parts[1].trim().toLowerCase();
+      const email = parts[1].trim().replace(/^<|>$/g, "").toLowerCase();
       if (!EMAIL_REGEX.test(email) || email.length > 100) {
         await sendMessage(chatId, `❌ Galat email address format: <code>${escapeHtml(email)}</code>`);
         return;
@@ -462,7 +496,7 @@ async function handleMessage(
         return;
       }
 
-      const email = parts[1].trim().toLowerCase();
+      const email = parts[1].trim().replace(/^<|>$/g, "").toLowerCase();
       if (!EMAIL_REGEX.test(email)) {
         await sendMessage(chatId, `❌ Galat email format: <code>${escapeHtml(email)}</code>`);
         return;
@@ -518,9 +552,9 @@ async function handleMessage(
         return;
       }
 
-      const email = parts[1].trim().toLowerCase();
+      const email = parts[1].trim().replace(/^<|>$/g, "").toLowerCase();
       if (!EMAIL_REGEX.test(email)) {
-        await sendMessage(chatId, `❌ Galat email format: <code>${escapeHtml(email)}</code>`);
+        await sendMessage(chatId, `❌ Invalid email format: <code>${escapeHtml(email)}</code>`);
         return;
       }
 
@@ -535,30 +569,78 @@ async function handleMessage(
       }
 
       if (!info || !info.found) {
-        await sendMessage(chatId, `❌ ${escapeHtml(info?.message || "User nahi mila")}`);
+        await sendMessage(chatId, `❌ ${escapeHtml(info?.message || "User not found")}`);
         return;
       }
 
       const statusUpper = String(info.status || "NONE").toUpperCase();
+      const isPermanent = String(info.status || "").toLowerCase().includes("permanent");
       const expiryLabel = info.expires_at
         ? new Date(info.expires_at).toUTCString()
-        : (info.status.includes("permanent") ? "Permanent (Never)" : "N/A");
+        : (isPermanent ? "Permanent (Never)" : "N/A");
       const redeemedLabel = info.redeemed_at
         ? new Date(info.redeemed_at).toUTCString()
         : "N/A";
       const keyMasked = info.key_last4 ? `<code>...${info.key_last4}</code>` : "None";
 
+      const lastSeenLabel = info.last_seen_at
+        ? new Date(info.last_seen_at).toUTCString()
+        : "Never (No activity logged)";
+      const inactiveLabel = info.days_inactive !== null && info.days_inactive !== undefined
+        ? (info.days_inactive === 0 ? "Active today (0 days)" : `${info.days_inactive} days ago`)
+        : "N/A";
+
       const userText =
-        `<b>👤 User Status</b>\n` +
+        `<b>👤 User Status & Telemetry</b>\n\n` +
         `• <b>Email:</b> <code>${escapeHtml(info.email)}</code>\n` +
-        `• <b>Nickname:</b> ${escapeHtml(info.nickname)}\n` +
+        `• <b>Nickname:</b> ${escapeHtml(info.nickname || "Not set")}\n` +
         `• <b>Key Status:</b> <b>${escapeHtml(statusUpper)}</b>\n` +
         `• <b>Active Key:</b> ${keyMasked}\n` +
         `• <b>Expires:</b> <code>${escapeHtml(expiryLabel)}</code>\n` +
-        `• <b>Redeemed At:</b> <code>${escapeHtml(redeemedLabel)}</code>`;
+        `• <b>Redeemed At:</b> <code>${escapeHtml(redeemedLabel)}</code>\n\n` +
+        `<b>📱 Activity & Usage:</b>\n` +
+        `• <b>Last Seen:</b> <code>${escapeHtml(lastSeenLabel)}</code>\n` +
+        `• <b>Inactivity:</b> <b>${escapeHtml(inactiveLabel)}</b>\n` +
+        `• <b>Total Active Time:</b> <code>${info.total_active_hours ?? 0} hrs</code>\n` +
+        `• <b>Total Music Play:</b> <code>${info.total_play_hours ?? 0} hrs</code>\n` +
+        `• <b>Daily Average:</b> <code>${info.avg_daily_active_mins ?? 0} mins/day</code>\n` +
+        `• <b>Today Active:</b> <code>${info.today_active_mins ?? 0} mins</code>\n` +
+        `• <b>Cloud Playlists:</b> <code>${info.cloud_playlists ?? 0}</code>\n` +
+        `• <b>App Version:</b> <code>${escapeHtml(info.app_version ?? "Unknown")}</code>`;
 
       await sendMessage(chatId, userText);
       break;
+    }
+
+    case "/users": {
+      const limit = parseInt(parts[1], 10) || 10;
+      const { data: userList, error } = await supabase.rpc("admin_list_users", {
+        p_limit: Math.min(Math.max(limit, 1), 25),
+      });
+
+      if (error) {
+        console.error("admin_list_users error:", error);
+        await sendMessage(chatId, `❌ Error fetching users: ${escapeHtml(error.message)}`);
+        return;
+      }
+
+      if (!userList || userList.length === 0) {
+        await sendMessage(chatId, "ℹ️ No users found.");
+        return;
+      }
+
+      const rows = userList.map((u: any, idx: number) => {
+        const inact = u.days_inactive !== null && u.days_inactive !== undefined
+          ? (u.days_inactive === 0 ? "Today" : `${u.days_inactive}d ago`)
+          : "Never";
+        return `${idx + 1}. <code>${escapeHtml(u.email)}</code> (${escapeHtml(u.nickname || "No nick")})\n` +
+               `   └ Key: <b>${escapeHtml(u.key_status || "NONE")}</b> | Active: <code>${u.total_active_hours ?? 0}h</code> | Last: <code>${inact}</code>`;
+      });
+
+      const responseText =
+        `<b>👥 Recent Users (${userList.length}):</b>\n\n` + rows.join("\n\n");
+
+      await sendMessage(chatId, responseText);
     }
 
     case "/unused": {
@@ -608,6 +690,9 @@ async function handleMessage(
 
       const statsText =
         `<b>📊 NotiFy System Stats</b>\n\n` +
+        `• <b>Active Users Today (DAU):</b> <b>${stats.dau_today ?? 0}</b>\n` +
+        `• <b>Total Registered Users:</b> ${stats.total_registered_users ?? 0}\n` +
+        `• <b>Cloud Playlists Stored:</b> ${stats.total_playlists ?? 0}\n` +
         `• <b>Total Keys:</b> ${stats.total_keys}\n` +
         `• <b>Unused Keys:</b> ${stats.unused_keys}\n` +
         `• <b>Active Keys:</b> ${stats.active_keys}\n` +

@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import android.util.Log
 import com.notify.download.stream.SupabaseConfig
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -74,7 +75,6 @@ private fun extractJsonString(jsonStr: String, key: String): String {
         if (value.isNotEmpty()) return value
     } catch (_: Exception) {}
 
-    // Fallback for JVM unit tests where Android JSONObject stub returns empty defaults
     val regex = Regex("\"$key\"\\s*:\\s*\"([^\"]*)\"")
     return regex.find(jsonStr)?.groupValues?.get(1) ?: ""
 }
@@ -158,7 +158,6 @@ internal fun parseVerifyResponse(code: Int, body: String): VerifyOtpResult {
         return VerifyOtpResult.Server5xx(code)
     }
 
-    // 4xx errors
     val errorCode = extractJsonString(body, "error_code").ifEmpty {
         extractJsonString(body, "code")
     }
@@ -224,16 +223,12 @@ class SupabaseAuthRepository(
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
         .build()
-) {
+) : AuthRepository {
     private val prefs: SharedPreferences =
         context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
 
-    /**
-     * Attempts to restore any saved session.
-     * Guaranteed to NOT log out the user on network errors.
-     */
     suspend fun restoreSession(): SupabaseAuthSession? = withContext(Dispatchers.IO) {
         val refreshToken = prefs.getString(KEY_REFRESH_TOKEN, null)
         val accessToken = prefs.getString(KEY_ACCESS_TOKEN, null)
@@ -254,12 +249,10 @@ class SupabaseAuthRepository(
             isOffline = false
         )
 
-        // If access token is still fresh (has more than 60s validity), reuse it immediately
         if (!cachedSession.isExpired(bufferSeconds = 60L)) {
             return@withContext cachedSession
         }
 
-        // Try to refresh token
         try {
             val refreshed = refreshAccessToken(refreshToken)
             if (refreshed != null) {
@@ -267,22 +260,16 @@ class SupabaseAuthRepository(
                 return@withContext refreshed
             }
         } catch (e: IOException) {
-            // Network failure: do NOT log out! Return cached session with offline fallback
             Log.w(TAG, "Network error during session restore; falling back to cached offline session", e)
             return@withContext cachedSession.copy(isOffline = true)
         } catch (e: Exception) {
             Log.e(TAG, "Unexpected error during session restore", e)
         }
 
-        // If refresh failed explicitly (e.g. invalid refresh token / revoked)
         clearLocalSession()
         return@withContext null
     }
 
-    /**
-     * Sign in using Email and Password.
-     * When email_not_confirmed is returned, transitions caller to NeedEmailOtp without auto-resend.
-     */
     suspend fun signInWithEmail(email: String, password: String): SignInResult =
         withContext(Dispatchers.IO) {
             try {
@@ -338,11 +325,6 @@ class SupabaseAuthRepository(
             }
         }
 
-    /**
-     * Sign up using Email and Password.
-     * When identities array is empty, user is already registered.
-     * Password is never persisted or logged.
-     */
     suspend fun signUpWithEmail(email: String, password: String): SignUpResult =
         withContext(Dispatchers.IO) {
             try {
@@ -367,15 +349,12 @@ class SupabaseAuthRepository(
                     }
 
                     val jsonObj = JSONObject(body)
-                    // If email confirm is off, session is returned in the response
                     if (jsonObj.has("access_token")) {
                         val session = parseSessionJson(body)
                         saveSession(session)
                         return@withContext SignUpResult.Success(session)
                     }
 
-                    // Check identities array
-                    // If user is already registered and confirmed, GoTrue returns 200 with identities: []
                     val identitiesArray = jsonObj.optJSONArray("identities")
                         ?: jsonObj.optJSONObject("user")?.optJSONArray("identities")
                     if (identitiesArray != null && identitiesArray.length() == 0) {
@@ -398,10 +377,6 @@ class SupabaseAuthRepository(
             }
         }
 
-    /**
-     * Verifies the email signup OTP token against Supabase Auth.
-     * On success, parses and saves the returned session.
-     */
     suspend fun verifyEmailOtp(email: String, token: String): VerifyOtpResult =
         withContext(Dispatchers.IO) {
             try {
@@ -432,9 +407,6 @@ class SupabaseAuthRepository(
             }
         }
 
-    /**
-     * Resends email signup OTP for the given email address.
-     */
     suspend fun resendEmailOtp(email: String): ResendOtpResult =
         withContext(Dispatchers.IO) {
             try {
@@ -460,10 +432,6 @@ class SupabaseAuthRepository(
             }
         }
 
-    /**
-     * Sends password recovery email via POST /auth/v1/recover.
-     * Prevents email enumeration by returning success generically.
-     */
     suspend fun sendPasswordRecovery(email: String): Result<Unit> = withContext(Dispatchers.IO) {
         try {
             val url = "${SupabaseConfig.AUTH_URL}/recover"
@@ -486,7 +454,6 @@ class SupabaseAuthRepository(
                 if (response.code in 500..599) {
                     return@withContext Result.failure(Exception("Server error. Please try again later"))
                 }
-                // Return success to prevent email enumeration
                 return@withContext Result.success(Unit)
             }
         } catch (e: java.net.SocketTimeoutException) {
@@ -498,10 +465,6 @@ class SupabaseAuthRepository(
         }
     }
 
-    /**
-     * Verifies the password recovery OTP token against Supabase Auth using type=recovery.
-     * On success, parses and saves the returned session.
-     */
     suspend fun verifyRecoveryOtp(email: String, token: String): VerifyOtpResult =
         withContext(Dispatchers.IO) {
             try {
@@ -532,9 +495,6 @@ class SupabaseAuthRepository(
             }
         }
 
-    /**
-     * Sign in with Google ID Token obtained from Credential Manager.
-     */
     suspend fun signInWithGoogleIdToken(idToken: String): Result<SupabaseAuthSession> =
         withContext(Dispatchers.IO) {
             try {
@@ -571,10 +531,6 @@ class SupabaseAuthRepository(
             }
         }
 
-    /**
-     * Refreshes the session using the given refresh token.
-     * Throws IOException on connectivity issues so callers can distinguish network faults.
-     */
     private fun refreshAccessToken(refreshToken: String): SupabaseAuthSession? {
         val url = "${SupabaseConfig.AUTH_URL}/token?grant_type=refresh_token"
         val json = JSONObject().apply {
@@ -598,10 +554,6 @@ class SupabaseAuthRepository(
         }
     }
 
-    /**
-     * Updates user password via PUT /auth/v1/user using the authenticated access token.
-     * Password is never logged or stored.
-     */
     suspend fun updateUserPassword(newPassword: String, accessToken: String): Result<Unit> =
         withContext(Dispatchers.IO) {
             try {
@@ -635,9 +587,6 @@ class SupabaseAuthRepository(
             }
         }
 
-    /**
-     * Signs out the current user, invalidating tokens locally and calling Supabase logout.
-     */
     suspend fun signOut(accessToken: String?) = withContext(Dispatchers.IO) {
         if (!accessToken.isNullOrBlank()) {
             try {
@@ -655,6 +604,11 @@ class SupabaseAuthRepository(
             }
         }
         clearLocalSession()
+    }
+
+    override fun getCurrentAccessToken(): String? {
+        val session = getStoredSession() ?: return null
+        return session.accessToken.ifBlank { null }
     }
 
     fun getStoredSession(): SupabaseAuthSession? {
@@ -749,4 +703,4 @@ class SupabaseAuthRepository(
             else -> desc
         }
     }
-}
+}

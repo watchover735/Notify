@@ -10,6 +10,7 @@ import com.notify.updater.AppConfig
 import com.notify.updater.AppConfigRepository
 import com.notify.updater.HardUpdateReason
 import com.notify.updater.UpdatePolicyDecision
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -163,6 +164,7 @@ class AuthGateViewModel(application: Application) : AndroidViewModel(application
                 "active" -> {
                     _gateState.value = AuthGateState.Ready
                     startLiveExpiryChecks(info.expiresAtEpochMs)
+                    triggerCloudSync()
                 }
                 "expired" -> {
                     _gateState.value = AuthGateState.NeedKey(
@@ -190,11 +192,28 @@ class AuthGateViewModel(application: Application) : AndroidViewModel(application
                 // If offline cache still valid
                 _gateState.value = AuthGateState.Ready
                 startLiveExpiryChecks(cached.expiresAtEpochMs)
+                triggerCloudSync()
             } else {
                 _gateState.value = AuthGateState.Error(
                     message = "Could not verify access. Please check your internet connection.",
                     onRetry = { checkInitialAuthState() }
                 )
+            }
+        }
+    }
+
+    private fun triggerCloudSync() {
+        val app = getApplication<Application>()
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                com.notify.sync.CloudPlaylistSyncRepository.getInstance(app).syncAllPlaylists()
+            } catch (e: Exception) {
+                Log.w(TAG, "Error during background playlist cloud sync", e)
+            }
+            try {
+                com.notify.telemetry.UserTelemetryManager.getInstance(app).flushHeartbeat(force = true)
+            } catch (e: Exception) {
+                Log.w(TAG, "Error during telemetry heartbeat flush", e)
             }
         }
     }
@@ -699,9 +718,18 @@ class AuthGateViewModel(application: Application) : AndroidViewModel(application
                     if (redeem.code == "ok") {
                         _gateState.value = AuthGateState.Ready
                         startLiveExpiryChecks(redeem.expiresAtEpochMs)
+                        triggerCloudSync()
                     } else {
+                        val displayMsg = when (redeem.code) {
+                            "invalid" -> "Invalid license key. Please check and try again."
+                            "already_used" -> "This key has already been used."
+                            "revoked" -> "This key has been revoked. Please contact support."
+                            "too_many_attempts" -> "Too many failed attempts. Please try again after 15 minutes."
+                            "permanent_already" -> "You already have permanent access, key was not used."
+                            else -> redeem.message.ifBlank { "Invalid license key." }
+                        }
                         _gateState.value = AuthGateState.NeedKey(
-                            message = redeem.message,
+                            message = displayMsg,
                             isError = true,
                             isLoading = false
                         )

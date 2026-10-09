@@ -1,4 +1,5 @@
 import CryptoJS from "npm:crypto-js@4.2.0";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.8";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -179,6 +180,30 @@ async function fetchTrending(): Promise<any[]> {
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
+  }
+
+  const authHeader = req.headers.get("Authorization");
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return new Response(JSON.stringify({ success: false, error: "Unauthorized" }), {
+      status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" }
+    });
+  }
+  const supabaseClient = createClient(
+    Deno.env.get("SUPABASE_URL") ?? "",
+    Deno.env.get("SUPABASE_ANON_KEY") ?? "",
+    { global: { headers: { Authorization: authHeader } }, auth: { persistSession: false } }
+  );
+  const { data: { user }, error: userError } = await supabaseClient.auth.getUser();
+  if (userError || !user) {
+    return new Response(JSON.stringify({ success: false, error: "Unauthorized: Invalid session" }), {
+      status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" }
+    });
+  }
+  const { data: entitlement, error: entitlementError } = await supabaseClient.rpc("get_entitlement");
+  if (entitlementError || !entitlement || entitlement.status !== "active") {
+    return new Response(JSON.stringify({ success: false, error: "Forbidden: Active license required" }), {
+      status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" }
+    });
   }
 
   // Check in-memory edge cache

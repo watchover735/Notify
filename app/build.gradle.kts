@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -13,19 +15,58 @@ android {
         applicationId = "com.notify"
         minSdk = 26
         targetSdk = 35
-        versionCode = 24
-        versionName = "0.7.8"
+        versionCode = 25
+        versionName = "0.7.9"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("long", "BUILD_TIME", "${System.currentTimeMillis()}L")
+    }
+
+    signingConfigs {
+        create("release") {
+            val localProperties = Properties()
+            val localPropertiesFile = rootProject.file("local.properties")
+            if (localPropertiesFile.exists()) {
+                localPropertiesFile.inputStream().use { localProperties.load(it) }
+            }
+
+            val keystorePath = localProperties.getProperty("RELEASE_KEYSTORE_PATH")
+                ?: System.getenv("RELEASE_KEYSTORE_PATH")
+            val keystorePassword = localProperties.getProperty("RELEASE_KEYSTORE_PASSWORD")
+                ?: System.getenv("RELEASE_KEYSTORE_PASSWORD")
+            val keyAliasStr = localProperties.getProperty("RELEASE_KEY_ALIAS")
+                ?: System.getenv("RELEASE_KEY_ALIAS")
+            val keyPasswordStr = localProperties.getProperty("RELEASE_KEY_PASSWORD")
+                ?: System.getenv("RELEASE_KEY_PASSWORD")
+
+            val resolvedKeystoreFile = if (!keystorePath.isNullOrBlank()) {
+                val rootFile = rootProject.file(keystorePath)
+                if (rootFile.exists()) rootFile else file(keystorePath)
+            } else null
+
+            if (resolvedKeystoreFile != null && resolvedKeystoreFile.exists()) {
+                storeFile = resolvedKeystoreFile
+                storePassword = keystorePassword
+                keyAlias = keyAliasStr
+                keyPassword = keyPasswordStr
+            } else {
+                // Safe fallback to debug signing config when dedicated release keystore is not yet configured
+                val debugSigning = getByName("debug")
+                storeFile = debugSigning.storeFile
+                storePassword = debugSigning.storePassword
+                keyAlias = debugSigning.keyAlias
+                keyPassword = debugSigning.keyPassword
+            }
+        }
     }
 
     buildTypes {
         debug {
         }
         release {
-            isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("debug")
+            isMinifyEnabled = true
+            isShrinkResources = true
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

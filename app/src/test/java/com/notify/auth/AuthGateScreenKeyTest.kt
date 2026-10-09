@@ -16,7 +16,7 @@ class AuthGateScreenKeyTest {
     fun needLogin_screenKeyRemainsStableAcrossLoadingAndError() {
         val initial = AuthGateState.NeedLogin(error = null, isLoading = false)
         val loading = AuthGateState.NeedLogin(error = null, isLoading = true)
-        val withError = AuthGateState.NeedLogin(error = "Email ya password galat hai", isLoading = false)
+        val withError = AuthGateState.NeedLogin(error = "Invalid email or password", isLoading = false)
         val loadingWithError = AuthGateState.NeedLogin(error = "Some error", isLoading = true)
 
         assertEquals(AuthGateScreenKey.NeedLogin, initial.toScreenKey())
@@ -30,8 +30,8 @@ class AuthGateScreenKeyTest {
         val email = "listener@example.com"
         val initial = AuthGateState.NeedEmailOtp(email = email, error = null, message = null, isLoading = false)
         val loading = AuthGateState.NeedEmailOtp(email = email, error = null, message = null, isLoading = true)
-        val withError = AuthGateState.NeedEmailOtp(email = email, error = "Code galat ya expire ho gaya", message = null, isLoading = false)
-        val withMessage = AuthGateState.NeedEmailOtp(email = email, error = null, message = "Code dobara bhej diya gaya hai", isLoading = false)
+        val withError = AuthGateState.NeedEmailOtp(email = email, error = "Code is invalid or expired", message = null, isLoading = false)
+        val withMessage = AuthGateState.NeedEmailOtp(email = email, error = null, message = "Code has been resent", isLoading = false)
 
         assertEquals(AuthGateScreenKey.NeedEmailOtp, initial.toScreenKey())
         assertEquals(AuthGateScreenKey.NeedEmailOtp, loading.toScreenKey())

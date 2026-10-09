@@ -21,7 +21,7 @@ class KeyUpdateTest {
         val validCodes = setOf("ok", "permanent_already", "invalid", "already_used", "revoked", "too_many_attempts")
 
         val resultOk = RedeemResult("ok", "Key successfully redeemed", 1_800_000_000_000L, 1_700_000_000_000L)
-        val resultPerm = RedeemResult("permanent_already", "Aapke paas pehle se permanent access hai", null, 1_700_000_000_000L)
+        val resultPerm = RedeemResult("permanent_already", "You already have permanent access, key was not used.", null, 1_700_000_000_000L)
 
         assert(validCodes.contains(resultOk.code))
         assert(validCodes.contains(resultPerm.code))

@@ -51,7 +51,7 @@ class LiveExpiryCheckTest {
     fun redeemResult_supportsPermanentAlreadyCode() {
         val result = RedeemResult(
             code = "permanent_already",
-            message = "Aapke paas pehle se permanent access hai, key use nahi hui",
+            message = "You already have permanent access, key was not used.",
             expiresAtEpochMs = null,
             serverTimeEpochMs = 1_700_000_000_000L
         )

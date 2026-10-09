@@ -124,7 +124,7 @@ BEGIN
     IF v_failed_attempts >= 5 THEN
         RETURN jsonb_build_object(
             'code', 'too_many_attempts',
-            'message', 'Bahut zyada koshish. 15 min baad try karo.'
+            'message', 'Too many failed attempts. Please try again after 15 minutes.'
         );
     END IF;
 
@@ -143,7 +143,7 @@ BEGIN
 
         RETURN jsonb_build_object(
             'code', 'invalid',
-            'message', 'Key galat hai'
+            'message', 'Invalid license key. Please check and try again.'
         );
     END IF;
 
@@ -154,7 +154,7 @@ BEGIN
 
         RETURN jsonb_build_object(
             'code', 'revoked',
-            'message', 'Key revoke kar di gayi. Admin se contact karo'
+            'message', 'This key has been revoked. Please contact support.'
         );
     END IF;
 
@@ -165,7 +165,7 @@ BEGIN
 
         RETURN jsonb_build_object(
             'code', 'already_used',
-            'message', 'Ye key pehle use ho chuki hai'
+            'message', 'This key has already been used.'
         );
     END IF;
 
@@ -181,7 +181,7 @@ BEGIN
     IF v_has_permanent THEN
         RETURN jsonb_build_object(
             'code', 'permanent_already',
-            'message', 'Aapke paas pehle se permanent access hai, key use nahi hui',
+            'message', 'You already have permanent access, key was not used.',
             'server_time', v_now
         );
     END IF;
@@ -221,7 +221,7 @@ BEGIN
 
         RETURN jsonb_build_object(
             'code', 'already_used',
-            'message', 'Ye key pehle use ho chuki hai'
+            'message', 'This key has already been used.'
         );
     END IF;
 

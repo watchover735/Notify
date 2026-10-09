@@ -80,6 +80,7 @@ class PlaylistLibraryViewModel(
     private val downloadManager = OfflineDownloadManager(application)
     private val database by lazy { NotiFyDatabase.getInstance(application) }
     private val followedArtistsRepository by lazy { FollowedArtistsRepository(application) }
+    private val cloudSyncRepo by lazy { com.notify.sync.CloudPlaylistSyncRepository.getInstance(application) }
 
     private val _uiState = MutableStateFlow(PlaylistLibraryUiState())
     val uiState: StateFlow<PlaylistLibraryUiState> = _uiState.asStateFlow()
@@ -87,6 +88,7 @@ class PlaylistLibraryViewModel(
     init {
         viewModelScope.launch(ioDispatcher) {
             repository.ensureLikedSongsPlaylist()
+            cloudSyncRepo.syncDownPlaylists()
         }
         observePlaylists()
         observeDownloads()
@@ -193,7 +195,8 @@ class PlaylistLibraryViewModel(
         val trimmed = title.trim()
         if (trimmed.isEmpty()) return
         viewModelScope.launch(ioDispatcher) {
-            repository.createPlaylist(trimmed)
+            val created = repository.createPlaylist(trimmed)
+            cloudSyncRepo.syncPlaylistToCloud(created.playlistId)
             _uiState.update { it.copy(actionMessage = "Created playlist '$trimmed'") }
             SnackbarManager.emit(SnackbarEvent.PlaylistCreated(trimmed))
         }
@@ -204,6 +207,7 @@ class PlaylistLibraryViewModel(
         if (trimmed.isEmpty()) return
         viewModelScope.launch(ioDispatcher) {
             repository.renamePlaylist(playlistId, trimmed)
+            cloudSyncRepo.syncPlaylistToCloud(playlistId)
             _uiState.update { it.copy(actionMessage = "Renamed to '$trimmed'") }
         }
     }
@@ -211,6 +215,7 @@ class PlaylistLibraryViewModel(
     fun deletePlaylist(playlistId: String) {
         viewModelScope.launch(ioDispatcher) {
             repository.deletePlaylist(playlistId)
+            cloudSyncRepo.deletePlaylistFromCloud(playlistId)
             _uiState.update { it.copy(actionMessage = "Playlist deleted") }
         }
     }
@@ -230,6 +235,7 @@ class PlaylistLibraryViewModel(
             val result = spotifyScraper.scrapePlaylist(url)
             if (result.playlist != null && result.playlist.tracks.isNotEmpty()) {
                 val saved = repository.saveScrapedPlaylist(result.playlist, url)
+                cloudSyncRepo.syncPlaylistToCloud(saved.playlistId)
                 // Trigger background artwork pre-enrichment immediately
                 com.notify.download.worker.ArtworkEnrichmentWorker.enqueue(getApplication(), saved.playlistId)
                 val successMsg = "Imported '${saved.title}' (${result.playlist.tracks.size} tracks)"
@@ -278,6 +284,7 @@ class PlaylistLibraryViewModel(
                         artworkUrl = extracted.artworkUrl,
                         sourceUrl = "https://www.youtube.com/playlist?list=${extracted.id}"
                     )
+                    cloudSyncRepo.syncPlaylistToCloud(saved.playlistId)
                     val count = extracted.tracks.size
                     val successMsg = "Imported $count songs"
                     _uiState.update {

@@ -29,6 +29,8 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
+import com.notify.auth.AuthRepository
+import com.notify.auth.SupabaseAuthRepository
 
 /**
  * High-performance composite stream resolver implementing Parallel-Race architecture:
@@ -57,10 +59,11 @@ class ResolvedStreamProviderChain(
     private val downloadManager: OfflineDownloadManager? = null,
     private val fastPrimaryResolver: AudioStreamResolver = FastInnerTubeStreamResolver(),
     private val fallbackResolver: AudioStreamResolver = OnlineStreamResolver(context),
-    private val deezerResolver: DeezerStreamResolver = DeezerStreamResolver(),
-    private val soundCloudResolver: SoundCloudStreamResolver = SoundCloudStreamResolver(),
-    private val jioSaavnResolver: JioSaavnStreamResolver = JioSaavnStreamResolver(),
-    private val cobaltResolver: CobaltStreamResolver = CobaltStreamResolver(),
+    private val authRepository: AuthRepository = SupabaseAuthRepository(context),
+    private val deezerResolver: DeezerStreamResolver = DeezerStreamResolver(authRepository = authRepository),
+    private val soundCloudResolver: SoundCloudStreamResolver = SoundCloudStreamResolver(authRepository = authRepository),
+    private val jioSaavnResolver: JioSaavnStreamResolver = JioSaavnStreamResolver(authRepository = authRepository),
+    private val cobaltResolver: CobaltStreamResolver = CobaltStreamResolver(authRepository = authRepository),
     private val customRacers: List<Pair<String, AudioStreamResolver>>? = null,
     scope: CoroutineScope? = null
 ) : AudioStreamResolver {

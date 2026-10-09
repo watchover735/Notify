@@ -9,6 +9,8 @@ import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
+import com.notify.auth.AuthRepository
+import com.notify.auth.SupabaseAuthRepository
 
 /**
  * A single trending song item returned by the JioSaavn trending edge function.
@@ -39,7 +41,10 @@ data class TrendingTrack(
  * - Fresh threshold: 6 hours (configurable via [CACHE_TTL_MS]).
  * - On fetch failure: surfaces cached data even if stale; returns empty if no cache.
  */
-class TrendingRepository(private val context: Context) {
+class TrendingRepository(
+    private val context: Context,
+    private val authRepository: AuthRepository = SupabaseAuthRepository(context)
+) {
 
     companion object {
         private const val TAG = "TrendingRepository"
@@ -78,12 +83,22 @@ class TrendingRepository(private val context: Context) {
                 return@withContext Result.success(parseJson(cachedJson))
             }
 
+            val token = authRepository.getCurrentAccessToken()
+            if (token.isNullOrBlank()) {
+                Log.w(TAG, "TRENDING_NO_SESSION unauthorized")
+                return@withContext if (cachedJson != null) {
+                    Result.success(parseJson(cachedJson))
+                } else {
+                    Result.failure(IllegalStateException("Unauthorized: Active user session required"))
+                }
+            }
+
             // Fetch from network
             return@withContext try {
                 val url = SupabaseConfig.TRENDING_JIOSAAVN_URL
                 val req = Request.Builder()
                     .url(url)
-                    .addHeader("Authorization", "Bearer ${SupabaseConfig.ANON_KEY}")
+                    .addHeader("Authorization", "Bearer $token")
                     .addHeader("Content-Type", "application/json")
                     .get()
                     .build()

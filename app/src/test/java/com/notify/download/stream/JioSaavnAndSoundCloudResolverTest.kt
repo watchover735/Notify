@@ -17,9 +17,21 @@ import org.robolectric.RobolectricTestRunner
 @RunWith(RobolectricTestRunner::class)
 class JioSaavnAndSoundCloudResolverTest {
 
+    private val testAuthRepo = object : com.notify.auth.AuthRepository {
+        override fun getCurrentAccessToken(): String = "test_user_jwt"
+    }
+
     @org.junit.Before
     fun setUp() {
         CobaltStreamResolver.resetDemotionForTest()
+    }
+
+    @Test
+    fun resolvers_failFast_whenNotAuthenticated() = runTest {
+        val resolverWithoutAuth = JioSaavnStreamResolver()
+        val result = resolverWithoutAuth.resolveStream("Tum Hi Ho Arijit Singh", "vid1")
+        assertTrue("Must fail fast when no user session is present", result.isFailure)
+        assertTrue(result.exceptionOrNull()?.message?.contains("Unauthorized") == true)
     }
 
     @Test
@@ -45,6 +57,7 @@ class JioSaavnAndSoundCloudResolverTest {
 
         val mockClient = OkHttpClient.Builder()
             .addInterceptor(Interceptor { chain ->
+                assertEquals("Bearer test_user_jwt", chain.request().header("Authorization"))
                 Response.Builder()
                     .request(chain.request())
                     .protocol(Protocol.HTTP_1_1)
@@ -55,7 +68,7 @@ class JioSaavnAndSoundCloudResolverTest {
             })
             .build()
 
-        val resolver = JioSaavnStreamResolver(client = mockClient, timeoutMs = 2000L)
+        val resolver = JioSaavnStreamResolver(client = mockClient, timeoutMs = 2000L, authRepository = testAuthRepo)
         val result = resolver.resolveStream("Tum Hi Ho Arijit Singh", "vid1")
 
         assertTrue("Resolution should succeed with Supabase Edge response", result.isSuccess)
@@ -90,6 +103,7 @@ class JioSaavnAndSoundCloudResolverTest {
 
         val mockClient = OkHttpClient.Builder()
             .addInterceptor(Interceptor { chain ->
+                assertEquals("Bearer test_user_jwt", chain.request().header("Authorization"))
                 Response.Builder()
                     .request(chain.request())
                     .protocol(Protocol.HTTP_1_1)
@@ -100,7 +114,7 @@ class JioSaavnAndSoundCloudResolverTest {
             })
             .build()
 
-        val resolver = SoundCloudStreamResolver(client = mockClient, timeoutMs = 2000L)
+        val resolver = SoundCloudStreamResolver(client = mockClient, timeoutMs = 2000L, authRepository = testAuthRepo)
         val result = resolver.resolveStream("Blinding Lights The Weeknd", "vid2")
 
         assertTrue("SoundCloud resolution should succeed with Supabase Edge response", result.isSuccess)
@@ -132,6 +146,7 @@ class JioSaavnAndSoundCloudResolverTest {
 
         val mockClient = OkHttpClient.Builder()
             .addInterceptor(Interceptor { chain ->
+                assertEquals("Bearer test_user_jwt", chain.request().header("Authorization"))
                 Response.Builder()
                     .request(chain.request())
                     .protocol(Protocol.HTTP_1_1)
@@ -142,7 +157,7 @@ class JioSaavnAndSoundCloudResolverTest {
             })
             .build()
 
-        val resolver = DeezerStreamResolver(client = mockClient, timeoutMs = 2000L)
+        val resolver = DeezerStreamResolver(client = mockClient, timeoutMs = 2000L, authRepository = testAuthRepo)
         val result = resolver.resolveStream("Coldplay Viva La Vida", "vid3")
 
         assertTrue("Deezer resolution should succeed with Supabase Edge response", result.isSuccess)
@@ -169,6 +184,7 @@ class JioSaavnAndSoundCloudResolverTest {
 
         val mockClient = OkHttpClient.Builder()
             .addInterceptor(Interceptor { chain ->
+                assertEquals("Bearer test_user_jwt", chain.request().header("Authorization"))
                 Response.Builder()
                     .request(chain.request())
                     .protocol(Protocol.HTTP_1_1)
@@ -179,7 +195,7 @@ class JioSaavnAndSoundCloudResolverTest {
             })
             .build()
 
-        val resolver = CobaltStreamResolver(client = mockClient, timeoutMs = 2000L)
+        val resolver = CobaltStreamResolver(client = mockClient, timeoutMs = 2000L, authRepository = testAuthRepo)
         val result = resolver.resolveStream("https://www.youtube.com/watch?v=vid4", "vid4")
 
         assertTrue("Cobalt resolution should succeed with Supabase Edge response", result.isSuccess)

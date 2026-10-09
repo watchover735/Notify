@@ -12,6 +12,8 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 
+import com.notify.auth.AuthRepository
+
 /**
  * Lightweight HTTP stream resolver delegating SoundCloud resolution to Supabase Edge Functions.
  * Eliminates on-device HTML parsing, regex asset scraping, and token tracking.
@@ -22,7 +24,8 @@ class SoundCloudStreamResolver(
         .readTimeout(3000, TimeUnit.MILLISECONDS)
         .build(),
     private val timeoutMs: Long = 3000L,
-    private val endpointUrl: String = SupabaseConfig.RESOLVE_SOUNDCLOUD_URL
+    private val endpointUrl: String = SupabaseConfig.RESOLVE_SOUNDCLOUD_URL,
+    private val authRepository: AuthRepository? = null
 ) {
     companion object {
         private const val TAG = "SoundCloudResolver"
@@ -42,6 +45,13 @@ class SoundCloudStreamResolver(
         val start = System.currentTimeMillis()
         Log.i(TAG, "SOUNDCLOUD_ATTEMPT_START query=\"$trimmedQuery\"")
 
+        val token = authRepository?.getCurrentAccessToken()
+        if (token.isNullOrBlank()) {
+            val elapsed = System.currentTimeMillis() - start
+            Log.w(TAG, "SOUNDCLOUD_ATTEMPT_COMPLETE outcome=FAILED elapsedMs=$elapsed reason=unauthorized_no_token")
+            return@withContext Result.failure(IllegalStateException("Unauthorized: Active user session required"))
+        }
+
         try {
             withTimeout(timeoutMs) {
                 val payload = JSONObject().apply {
@@ -57,7 +67,7 @@ class SoundCloudStreamResolver(
                 val request = Request.Builder()
                     .url(endpointUrl)
                     .addHeader("apikey", SupabaseConfig.ANON_KEY)
-                    .addHeader("Authorization", "Bearer ${SupabaseConfig.ANON_KEY}")
+                    .addHeader("Authorization", "Bearer $token")
                     .addHeader("Content-Type", "application/json")
                     .post(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
                     .build()

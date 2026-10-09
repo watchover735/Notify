@@ -1,6 +1,7 @@
 *.iml
 .gradle
 /local.properties
+local.properties
 /.idea
 .idea/
 .vscode/
@@ -19,3 +20,5 @@ capture/
 *.keystore
 *.jks
 scratch/
+__pycache__/
+*.pyc
