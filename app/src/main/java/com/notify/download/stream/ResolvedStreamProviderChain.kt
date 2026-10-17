@@ -565,7 +565,13 @@ class ResolvedStreamProviderChain(
                 if (query.isNotBlank()) {
                     // SoundCloud
                     registerRacer("SoundCloud") {
-                        soundCloudResolver.resolveStream(query, videoId, effectiveExpectedDurationMs)
+                        soundCloudResolver.resolveStream(
+                            query = query,
+                            videoId = videoId,
+                            expectedDurationMs = effectiveExpectedDurationMs,
+                            expectedTitle = effectiveTitle,
+                            expectedArtist = effectiveArtist
+                        )
                     }
 
                     // JioSaavn (conditional Indic / Indian artist routing)
@@ -573,7 +579,13 @@ class ResolvedStreamProviderChain(
                     logI("ROUTING_DECISION jiosaavn=$includeJioSaavn reason=$routingReason query=\"$query\"")
                     if (includeJioSaavn) {
                         registerRacer("JioSaavn") {
-                            jioSaavnResolver.resolveStream(query, videoId, effectiveExpectedDurationMs)
+                            jioSaavnResolver.resolveStream(
+                                query = query,
+                                videoId = videoId,
+                                expectedDurationMs = effectiveExpectedDurationMs,
+                                expectedTitle = effectiveTitle,
+                                expectedArtist = effectiveArtist
+                            )
                         }
                     }
 

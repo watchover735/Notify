@@ -35,7 +35,9 @@ class SoundCloudStreamResolver(
     suspend fun resolveStream(
         query: String,
         videoId: String? = null,
-        expectedDurationMs: Long? = null
+        expectedDurationMs: Long? = null,
+        expectedTitle: String? = null,
+        expectedArtist: String? = null
     ): Result<ResolvedStream> = withContext(Dispatchers.IO) {
         val trimmedQuery = query.trim()
         if (trimmedQuery.isBlank()) {
@@ -61,6 +63,12 @@ class SoundCloudStreamResolver(
                     }
                     if (expectedDurationMs != null && expectedDurationMs > 0) {
                         put("expectedDurationMs", expectedDurationMs)
+                    }
+                    if (!expectedTitle.isNullOrBlank()) {
+                        put("expectedTitle", expectedTitle)
+                    }
+                    if (!expectedArtist.isNullOrBlank()) {
+                        put("expectedArtist", expectedArtist)
                     }
                 }
 
