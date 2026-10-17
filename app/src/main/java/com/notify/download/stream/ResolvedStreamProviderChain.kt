@@ -289,13 +289,24 @@ class ResolvedStreamProviderChain(
                         val res = block()
                         if (res != null && res.isSuccess) {
                             val stream = res.getOrThrow()
+                            // STEP-A DIAGNOSTIC: log what the provider matched vs what we expected
+                            val matchedDurS = stream.durationMs?.let { it / 1000L }
+                            val expectedDurS = effectiveExpectedDurationMs?.let { it / 1000L }
+                            val durDeltaS = if (stream.durationMs != null && effectiveExpectedDurationMs != null)
+                                Math.abs(stream.durationMs - effectiveExpectedDurationMs) / 1000L else null
+                            logI("PROVIDER_ATTEMPT_MATCHED provider=$name videoId=$videoId" +
+                                " expectedTitle=\"$effectiveTitle\" matchedTitle=\"${stream.title}\"" +
+                                " expectedArtist=\"$effectiveArtist\"" +
+                                " expectedDurS=$expectedDurS matchedDurS=$matchedDurS durDeltaS=$durDeltaS")
                             val isValid = validateDuration(name, stream, effectiveExpectedDurationMs, effectiveTitle)
                             if (isValid) {
                                 // Atomic completion: first winner succeeds, others return false
                                 if (winnerDeferred.complete(name to stream)) {
                                     safeLateWinner.complete(name to stream)
                                     val elapsed = System.currentTimeMillis() - raceStart
-                                    logI("RACE_WINNER provider=$name videoId=$videoId elapsedMs=$elapsed format=${stream.formatId}")
+                                    logI("RACE_WINNER provider=$name videoId=$videoId elapsedMs=$elapsed format=${stream.formatId}" +
+                                        " matchedTitle=\"${stream.title}\" expectedTitle=\"$effectiveTitle\"" +
+                                        " matchedDurS=$matchedDurS expectedDurS=$expectedDurS durDeltaS=$durDeltaS")
                                 }
                             } else {
                                 val streamDuration = stream.durationMs
@@ -309,6 +320,8 @@ class ResolvedStreamProviderChain(
                                     }
                                 }
                             }
+                        } else if (res != null && res.isFailure) {
+                            logW("PROVIDER_ATTEMPT_FAILED provider=$name videoId=$videoId reason=${res.exceptionOrNull()?.message}")
                         }
                     } catch (_: Throwable) {
                         // Suppress individual racer errors in parallel race
