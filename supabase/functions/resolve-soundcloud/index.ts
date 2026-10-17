@@ -1,4 +1,10 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.8";
+import {
+  selectBestCandidate,
+  CandidateTrack,
+  decodeHtmlEntities,
+  MIN_SCORE
+} from "../_shared/track-scorer.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -131,21 +137,32 @@ Deno.serve(async (req: Request) => {
   try {
     let query = "";
     let videoId: string | null = null;
-
+    let expectedTitle: string | null = null;
+    let expectedArtist: string | null = null;
     let expectedDurationMs: number | null = null;
 
     if (req.method === "GET") {
       const url = new URL(req.url);
       query = url.searchParams.get("query") || url.searchParams.get("q") || "";
       videoId = url.searchParams.get("videoId");
+      expectedTitle = url.searchParams.get("expectedTitle") || url.searchParams.get("title");
+      expectedArtist = url.searchParams.get("expectedArtist") || url.searchParams.get("artist");
       const exp = url.searchParams.get("expectedDurationMs") || url.searchParams.get("durationMs");
-      if (exp) expectedDurationMs = parseInt(exp, 10);
+      if (exp) {
+        const parsed = parseInt(exp, 10);
+        if (!isNaN(parsed) && parsed > 0) expectedDurationMs = parsed;
+      }
     } else {
       const body = await req.json().catch(() => ({}));
-      query = body.query || body.q || [body.title, body.artist].filter(Boolean).join(" ");
+      expectedTitle = body.expectedTitle || body.title || null;
+      expectedArtist = body.expectedArtist || body.artist || null;
+      query = body.query || body.q || [expectedTitle, expectedArtist].filter(Boolean).join(" ");
       videoId = body.videoId || null;
-      if (body.expectedDurationMs) expectedDurationMs = parseInt(String(body.expectedDurationMs), 10);
-      else if (body.durationMs) expectedDurationMs = parseInt(String(body.durationMs), 10);
+      const rawExpDur = body.expectedDurationMs || body.durationMs;
+      if (rawExpDur) {
+        const parsed = parseInt(String(rawExpDur), 10);
+        if (!isNaN(parsed) && parsed > 0) expectedDurationMs = parsed;
+      }
     }
 
     const trimmedQuery = query.trim();
@@ -156,8 +173,8 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    // Check cache
-    const cacheKey = `${trimmedQuery.toLowerCase()}_${expectedDurationMs || 0}`;
+    // Check cache with v2: prefix
+    const cacheKey = `v2:${trimmedQuery.toLowerCase()}_${expectedDurationMs || 0}_${(expectedTitle || "").toLowerCase()}`;
     const cached = cache.get(cacheKey);
     if (cached && Date.now() < cached.expiresAt) {
       return new Response(JSON.stringify({ ...cached.data, cached: true }), {
@@ -199,90 +216,124 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    let track = collection[0];
-    if (expectedDurationMs && expectedDurationMs > 0 && collection.length > 1) {
-      const tolerance = Math.max(15000, expectedDurationMs * 0.20);
-      const matched = collection.find((t: any) => {
-        const d = t?.duration || 0;
-        return Math.abs(d - expectedDurationMs) <= tolerance;
-      });
-      if (matched) {
-        track = matched;
-      } else {
-        const nonSnippet = collection.find((t: any) => (t?.duration || 0) > 45000);
-        if (nonSnippet) {
-          track = nonSnippet;
-        }
-      }
-    }
-
-    const transcodings = track?.media?.transcodings;
-    if (!Array.isArray(transcodings) || transcodings.length === 0) {
-      return new Response(
-        JSON.stringify({ success: false, error: "No transcodings on SoundCloud track" }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    // Map SoundCloud search collection to CandidateTrack objects
+    const candidateTracks: CandidateTrack[] = collection.map((t: any, idx: number) => {
+      const dur = typeof t?.duration === "number" && t.duration > 0 ? t.duration : null;
+      const decodedTitle = decodeHtmlEntities(t?.title || "");
+      const decodedArtist = decodeHtmlEntities(
+        t?.user?.username || t?.user?.artist_name || t?.artist || ""
       );
-    }
 
-    // Prioritize progressive MP3; fallback to HLS
-    let chosenTranscodingUrl: string | null = null;
-    let isProgressive = false;
-
-    for (const tc of transcodings) {
-      const protocol = tc?.format?.protocol?.toLowerCase() || "";
-      const url = tc?.url;
-      if (url) {
-        if (protocol === "progressive") {
-          chosenTranscodingUrl = url;
-          isProgressive = true;
-          break;
-        } else if (!chosenTranscodingUrl) {
-          chosenTranscodingUrl = url;
-          isProgressive = false;
-        }
-      }
-    }
-
-    if (!chosenTranscodingUrl) {
-      return new Response(
-        JSON.stringify({ success: false, error: "No valid transcoding URL found" }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    const separator = chosenTranscodingUrl.includes("?") ? "&" : "?";
-    let streamResolveUrl = `${chosenTranscodingUrl}${separator}client_id=${effectiveClientId}`;
-
-    let streamResp = await fetch(streamResolveUrl, {
-      headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
+      return {
+        id: t?.id || String(idx),
+        title: decodedTitle,
+        artist: decodedArtist,
+        durationMs: dur,
+        raw: t,
+      };
     });
 
-    if (streamResp.status === 401) {
-      cachedClientId = null;
-      effectiveClientId = await getOrScrapeClientId(true);
-      streamResolveUrl = `${chosenTranscodingUrl}${separator}client_id=${effectiveClientId}`;
-      streamResp = await fetch(streamResolveUrl, {
+    // Score all top 5 candidates with modifier filter and tie-breaking
+    const { winner, scoredList } = selectBestCandidate(candidateTracks, {
+      query: trimmedQuery,
+      expectedTitle: expectedTitle || null,
+      expectedArtist: expectedArtist || null,
+      expectedDurationMs: expectedDurationMs || null,
+    });
+
+    // Diagnostic logging for calibration and telemetry
+    for (const s of scoredList) {
+      console.log(
+        `[SOUNDCLOUD_CANDIDATE] id=${s.candidate.id} title="${s.candidate.title}" durationMs=${s.candidate.durationMs}` +
+        ` score=${s.score} rejected=${s.isRejected} reason=${s.rejectReason || "none"} mods=[${s.detectedModifiers.join(",")}]`
+      );
+    }
+
+    if (!winner) {
+      console.log(`[SOUNDCLOUD_DECISION] outcome=NO_SAFE_MATCH query="${trimmedQuery}" expectedDur=${expectedDurationMs}`);
+      return new Response(
+        JSON.stringify({ success: false, error: "no_safe_match" }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // Sort eligible candidates (score >= MIN_SCORE and not rejected) in descending score order
+    const eligibleScored = scoredList
+      .filter((s) => !s.isRejected && s.score >= MIN_SCORE)
+      .sort((a, b) => b.score - a.score);
+
+    let directUrl: string | null = null;
+    let chosenCandidate: CandidateTrack | null = null;
+    let chosenScore = 0;
+    let isProgressive = false;
+
+    // Resolve stream for best scoring eligible candidate; if transcoding fails, try next best
+    for (const scored of eligibleScored) {
+      const track = scored.candidate.raw;
+      const transcodings = track?.media?.transcodings;
+      if (!Array.isArray(transcodings) || transcodings.length === 0) continue;
+
+      let chosenTranscodingUrl: string | null = null;
+      let candidateIsProgressive = false;
+
+      for (const tc of transcodings) {
+        const protocol = tc?.format?.protocol?.toLowerCase() || "";
+        const url = tc?.url;
+        if (url) {
+          if (protocol === "progressive") {
+            chosenTranscodingUrl = url;
+            candidateIsProgressive = true;
+            break;
+          } else if (!chosenTranscodingUrl) {
+            chosenTranscodingUrl = url;
+            candidateIsProgressive = false;
+          }
+        }
+      }
+
+      if (!chosenTranscodingUrl) continue;
+
+      const separator = chosenTranscodingUrl.includes("?") ? "&" : "?";
+      let streamResolveUrl = `${chosenTranscodingUrl}${separator}client_id=${effectiveClientId}`;
+
+      let streamResp = await fetch(streamResolveUrl, {
         headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
       });
+
+      if (streamResp.status === 401) {
+        cachedClientId = null;
+        effectiveClientId = await getOrScrapeClientId(true);
+        streamResolveUrl = `${chosenTranscodingUrl}${separator}client_id=${effectiveClientId}`;
+        streamResp = await fetch(streamResolveUrl, {
+          headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
+        });
+      }
+
+      if (!streamResp.ok) continue;
+
+      const streamJson = await streamResp.json().catch(() => null);
+      const resolvedDirectUrl = streamJson?.url;
+      if (resolvedDirectUrl && typeof resolvedDirectUrl === "string" && resolvedDirectUrl.startsWith("http")) {
+        directUrl = resolvedDirectUrl;
+        chosenCandidate = scored.candidate;
+        chosenScore = scored.score;
+        isProgressive = candidateIsProgressive;
+        break;
+      }
     }
 
-    if (!streamResp.ok) {
+    if (!directUrl || !chosenCandidate) {
+      console.log(`[SOUNDCLOUD_DECISION] outcome=TRANSCODING_FAILED query="${trimmedQuery}"`);
       return new Response(
-        JSON.stringify({ success: false, error: `Transcoding resolution failed: ${streamResp.status}` }),
+        JSON.stringify({ success: false, error: "no_safe_match" }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    const streamJson = await streamResp.json().catch(() => null);
-    const directUrl = streamJson?.url;
-    if (!directUrl || typeof directUrl !== "string" || !directUrl.startsWith("http")) {
-      return new Response(
-        JSON.stringify({ success: false, error: "Empty direct URL from SoundCloud" }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    const trackDuration = typeof track?.duration === "number" && track.duration > 0 ? track.duration : null;
+    console.log(
+      `[SOUNDCLOUD_DECISION] outcome=CHOSEN id=${chosenCandidate.id} title="${chosenCandidate.title}"` +
+      ` score=${chosenScore} durationMs=${chosenCandidate.durationMs}`
+    );
 
     const resultData = {
       success: true,
@@ -292,11 +343,14 @@ Deno.serve(async (req: Request) => {
       mimeType: isProgressive ? "audio/mpeg" : "application/x-mpegURL",
       container: isProgressive ? "mp3" : "m3u8",
       bitrate: 128000,
-      durationMs: trackDuration,
+      durationMs: chosenCandidate.durationMs || null,
       expiresAtEpochMs: Date.now() + 1800000, // 30 min expiration
       fallbackUrls: [],
       videoId: videoId,
       cached: false,
+      title: chosenCandidate.title,
+      matchScore: chosenScore,
+      candidatesConsidered: scoredList.length,
     };
 
     cache.set(cacheKey, { data: resultData, expiresAt: Date.now() + 1800000 });
@@ -311,3 +365,4 @@ Deno.serve(async (req: Request) => {
     });
   }
 });
+

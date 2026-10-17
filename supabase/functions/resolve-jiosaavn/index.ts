@@ -1,5 +1,11 @@
 import CryptoJS from "npm:crypto-js@4.2.0";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.8";
+import {
+  selectBestCandidate,
+  CandidateTrack,
+  decodeHtmlEntities,
+  MIN_SCORE
+} from "../_shared/track-scorer.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -96,15 +102,32 @@ Deno.serve(async (req: Request) => {
   try {
     let query = "";
     let videoId: string | null = null;
+    let expectedTitle: string | null = null;
+    let expectedArtist: string | null = null;
+    let expectedDurationMs: number | null = null;
 
     if (req.method === "GET") {
       const url = new URL(req.url);
       query = url.searchParams.get("query") || url.searchParams.get("q") || "";
       videoId = url.searchParams.get("videoId");
+      expectedTitle = url.searchParams.get("expectedTitle") || url.searchParams.get("title");
+      expectedArtist = url.searchParams.get("expectedArtist") || url.searchParams.get("artist");
+      const expDur = url.searchParams.get("expectedDurationMs") || url.searchParams.get("durationMs");
+      if (expDur) {
+        const parsed = parseInt(expDur, 10);
+        if (!isNaN(parsed) && parsed > 0) expectedDurationMs = parsed;
+      }
     } else {
       const body = await req.json().catch(() => ({}));
-      query = body.query || body.q || [body.title, body.artist].filter(Boolean).join(" ");
+      expectedTitle = body.expectedTitle || body.title || null;
+      expectedArtist = body.expectedArtist || body.artist || null;
+      query = body.query || body.q || [expectedTitle, expectedArtist].filter(Boolean).join(" ");
       videoId = body.videoId || null;
+      const rawExpDur = body.expectedDurationMs || body.durationMs;
+      if (rawExpDur) {
+        const parsed = parseInt(String(rawExpDur), 10);
+        if (!isNaN(parsed) && parsed > 0) expectedDurationMs = parsed;
+      }
     }
 
     const trimmedQuery = query.trim();
@@ -115,8 +138,8 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    // Check in-memory cache
-    const cacheKey = trimmedQuery.toLowerCase();
+    // Check in-memory cache with v2: prefix to bypass pre-scorer wrong versions
+    const cacheKey = `v2:${trimmedQuery.toLowerCase()}_${expectedDurationMs || 0}_${(expectedTitle || "").toLowerCase()}`;
     const cached = cache.get(cacheKey);
     if (cached && Date.now() < cached.expiresAt) {
       return new Response(JSON.stringify({ ...cached.data, cached: true }), {
@@ -124,9 +147,9 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    // Query JioSaavn search API
+    // Query JioSaavn search API (request top 5 results for candidate evaluation)
     const encoded = encodeURIComponent(trimmedQuery);
-    const searchUrl = `${SEARCH_ENDPOINT}?__call=search.getResults&_format=json&n=3&p=1&q=${encoded}&_marker=0&api_version=4&ctx=web6dot0`;
+    const searchUrl = `${SEARCH_ENDPOINT}?__call=search.getResults&_format=json&n=5&p=1&q=${encoded}&_marker=0&api_version=4&ctx=web6dot0`;
 
     const apiResp = await fetch(searchUrl, {
       headers: {
@@ -150,21 +173,78 @@ Deno.serve(async (req: Request) => {
       );
     }
 
+    // Map upstream search results to CandidateTrack format with HTML decoding & safe duration parsing
+    const candidateTracks: CandidateTrack[] = results.map((item: any, idx: number) => {
+      let durationMs: number | null = null;
+      const rawDur = item?.more_info?.duration;
+      if (rawDur !== undefined && rawDur !== null) {
+        const durSec = parseInt(String(rawDur), 10);
+        if (!isNaN(durSec) && durSec > 0) {
+          durationMs = durSec * 1000;
+        }
+      }
+
+      const decodedTitle = decodeHtmlEntities(item?.song || item?.title || "");
+      const decodedArtist = decodeHtmlEntities(
+        item?.primary_artists || item?.singers || item?.music || item?.artist || ""
+      );
+
+      return {
+        id: item?.id || String(idx),
+        title: decodedTitle,
+        artist: decodedArtist,
+        durationMs,
+        raw: item,
+      };
+    });
+
+    // Score all top 5 candidates with version modifier detection and tie-breaking
+    const { winner, scoredList } = selectBestCandidate(candidateTracks, {
+      query: trimmedQuery,
+      expectedTitle: expectedTitle || null,
+      expectedArtist: expectedArtist || null,
+      expectedDurationMs: expectedDurationMs || null,
+    });
+
+    // Diagnostic logging for calibration and telemetry
+    for (const s of scoredList) {
+      console.log(
+        `[JIOSAAVN_CANDIDATE] id=${s.candidate.id} title="${s.candidate.title}" durationMs=${s.candidate.durationMs}` +
+        ` score=${s.score} rejected=${s.isRejected} reason=${s.rejectReason || "none"} mods=[${s.detectedModifiers.join(",")}]`
+      );
+    }
+
+    if (!winner) {
+      console.log(`[JIOSAAVN_DECISION] outcome=NO_SAFE_MATCH query="${trimmedQuery}" expectedDur=${expectedDurationMs}`);
+      return new Response(
+        JSON.stringify({ success: false, error: "no_safe_match" }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // Sort eligible candidates (score >= MIN_SCORE and not rejected) in descending score order
+    const eligibleScored = scoredList
+      .filter((s) => !s.isRejected && s.score >= MIN_SCORE)
+      .sort((a, b) => b.score - a.score);
+
     let directStreamUrl: string | null = null;
     let fallbackStreamUrls: string[] = [];
     let selectedBitrate = 320000;
     let selectedFormatId = "jiosaavn_aac_320";
     let selectedDurationMs: number | null = null;
+    let chosenCandidate: CandidateTrack | null = null;
+    let chosenScore = 0;
 
-    for (const item of results) {
-      const moreInfo = item?.more_info;
+    // Decrypt media URL for the best scoring eligible candidate; if decryption fails, try next best
+    for (const scored of eligibleScored) {
+      const candidate = scored.candidate;
+      const moreInfo = candidate.raw?.more_info;
       if (!moreInfo) continue;
 
       const encUrl = moreInfo.encrypted_media_url;
       if (encUrl && typeof encUrl === "string") {
         const decrypted = decryptMediaUrl(encUrl);
         if (decrypted && decrypted.startsWith("http")) {
-          // Detect existing quality suffix
           const currentSuffix = QUALITY_VARIANTS.map((v) => v.suffix).find((s) =>
             decrypted.includes(s)
           );
@@ -180,17 +260,14 @@ Deno.serve(async (req: Request) => {
           } else {
             directStreamUrl = decrypted;
           }
-          if (moreInfo.duration) {
-            const durSec = parseInt(String(moreInfo.duration), 10);
-            if (!isNaN(durSec) && durSec > 0) {
-              selectedDurationMs = durSec * 1000;
-            }
-          }
+          selectedDurationMs = candidate.durationMs || null;
+          chosenCandidate = candidate;
+          chosenScore = scored.score;
           break;
         }
       }
 
-      // Preview URL fallback
+      // Preview URL fallback (only on this scored eligible candidate; never bypass scoring)
       const previewUrl = moreInfo.media_preview_url;
       if (!directStreamUrl && previewUrl && typeof previewUrl === "string" && previewUrl.startsWith("http")) {
         directStreamUrl = previewUrl
@@ -200,22 +277,25 @@ Deno.serve(async (req: Request) => {
           directStreamUrl.replace("_320.mp4", "_160.mp4"),
           directStreamUrl.replace("_320.mp4", "_96.mp4"),
         ];
-        if (moreInfo.duration) {
-          const durSec = parseInt(String(moreInfo.duration), 10);
-          if (!isNaN(durSec) && durSec > 0) {
-            selectedDurationMs = durSec * 1000;
-          }
-        }
+        selectedDurationMs = candidate.durationMs || null;
+        chosenCandidate = candidate;
+        chosenScore = scored.score;
         break;
       }
     }
 
-    if (!directStreamUrl) {
+    if (!directStreamUrl || !chosenCandidate) {
+      console.log(`[JIOSAAVN_DECISION] outcome=DECRYPT_FAILED query="${trimmedQuery}"`);
       return new Response(
-        JSON.stringify({ success: false, error: "Could not decrypt/resolve media URL" }),
+        JSON.stringify({ success: false, error: "no_safe_match" }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
+
+    console.log(
+      `[JIOSAAVN_DECISION] outcome=CHOSEN id=${chosenCandidate.id} title="${chosenCandidate.title}"` +
+      ` score=${chosenScore} durationMs=${selectedDurationMs}`
+    );
 
     const resultData = {
       success: true,
@@ -230,6 +310,9 @@ Deno.serve(async (req: Request) => {
       fallbackUrls: fallbackStreamUrls,
       videoId: videoId,
       cached: false,
+      title: chosenCandidate.title,
+      matchScore: chosenScore,
+      candidatesConsidered: scoredList.length,
     };
 
     // Cache successful resolution for 1 hour
@@ -245,3 +328,4 @@ Deno.serve(async (req: Request) => {
     });
   }
 });
+
