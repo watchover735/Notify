@@ -103,9 +103,12 @@ class DeezerStreamResolver(
                 val durationMs = json.optLong("durationMs", 30_000L).takeIf { it > 0 } ?: 30_000L
                 val expiresAtEpochMs = json.optLong("expiresAtEpochMs", System.currentTimeMillis() + 3600000L)
                 val returnedVideoId = json.optString("videoId").takeIf { it.isNotBlank() } ?: videoId
+                // B1.3: Parse title so modifier filter can run on Deezer candidates
+                val streamTitle = (json.optString("title").takeIf { it.isNotBlank() }
+                    ?: json.optString("title_short").takeIf { it.isNotBlank() })
 
                 val elapsed = System.currentTimeMillis() - start
-                Log.i(TAG, "DEEZER_ATTEMPT_COMPLETE outcome=SUCCESS elapsedMs=$elapsed format=$formatId durationMs=$durationMs")
+                Log.i(TAG, "DEEZER_ATTEMPT_COMPLETE outcome=SUCCESS elapsedMs=$elapsed format=$formatId durationMs=$durationMs title=\"$streamTitle\"")
 
                 val resolvedStream = ResolvedStream(
                     streamUrl = streamUrl,
@@ -115,7 +118,8 @@ class DeezerStreamResolver(
                     bitrate = bitrate,
                     durationMs = durationMs,
                     expiresAtEpochMs = expiresAtEpochMs,
-                    videoId = returnedVideoId
+                    videoId = returnedVideoId,
+                    title = streamTitle
                 )
                 Result.success(resolvedStream)
             }
