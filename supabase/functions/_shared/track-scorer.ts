@@ -179,7 +179,8 @@ function tokenize(text: string): string[] {
 export function evaluateModifierCompatibility(
   candidateTitle: string,
   expectedTitle: string,
-  expectedArtist?: string | null
+  expectedArtist?: string | null,
+  candidateArtist?: string | null
 ): { compatible: boolean; reason?: string; detectedModifiers: string[] } {
   if (!candidateTitle) {
     // Fail-open on empty candidate title
@@ -188,18 +189,29 @@ export function evaluateModifierCompatibility(
 
   const normCandidate = normalizeForModifierCheck(candidateTitle);
   const normExpected = normalizeForModifierCheck(expectedTitle);
-  const normExpectedWithArtist = expectedArtist
-    ? `${normExpected} ${expectedArtist.toLowerCase().trim()}`
-    : normExpected;
+  const normExpectedArtist = expectedArtist ? normalizeForModifierCheck(expectedArtist) : "";
 
-  const expectedModifiers = extractModifiers(normExpectedWithArtist);
+  // Modifiers explicitly requested in the song title
+  const requestedModifiers = extractModifiers(normExpected);
+  // Modifiers detected in the candidate title
   const candidateModifiers = extractModifiers(normCandidate);
   const detectedList = Array.from(candidateModifiers);
 
-  // Rule 1: Expected has modifiers -> Candidate must have at least one of them
-  if (expectedModifiers.size > 0) {
+  // If expectedArtist has "dj" (e.g. "DJ Khaled", "DJ Snake"), "dj" in candidate title is an artist prefix, not a modifier
+  const expectedArtistHasDj = normExpectedArtist ? containsModifier(normExpectedArtist, "dj") : false;
+
+  const candidateRealModifiers = new Set<string>();
+  for (const m of candidateModifiers) {
+    if (m === "dj" && expectedArtistHasDj) {
+      continue;
+    }
+    candidateRealModifiers.add(m);
+  }
+
+  // Rule 1: Expected title has modifiers -> Candidate must have at least one matching modifier
+  if (requestedModifiers.size > 0) {
     let hasMatching = false;
-    for (const m of expectedModifiers) {
+    for (const m of requestedModifiers) {
       if (candidateModifiers.has(m)) {
         hasMatching = true;
         break;
@@ -208,13 +220,13 @@ export function evaluateModifierCompatibility(
     if (!hasMatching) {
       return {
         compatible: false,
-        reason: `expected_modifier_missing: ${Array.from(expectedModifiers).join(",")}`,
+        reason: `expected_modifier_missing: ${Array.from(requestedModifiers).join(",")}`,
         detectedModifiers: detectedList,
       };
     }
     // Reject if candidate has extra unrequested modifiers
-    for (const m of candidateModifiers) {
-      if (!expectedModifiers.has(m)) {
+    for (const m of candidateRealModifiers) {
+      if (!requestedModifiers.has(m)) {
         return {
           compatible: false,
           reason: `unrequested_modifier: ${m}`,
@@ -223,11 +235,11 @@ export function evaluateModifierCompatibility(
       }
     }
   } else {
-    // Rule 2: Expected has NO modifiers -> Candidate must have NO modifiers
-    if (candidateModifiers.size > 0) {
+    // Rule 2: Expected title has NO modifiers -> Candidate must have NO unrequested modifiers
+    if (candidateRealModifiers.size > 0) {
       return {
         compatible: false,
-        reason: `unrequested_modifier: ${detectedList.join(",")}`,
+        reason: `unrequested_modifier: ${Array.from(candidateRealModifiers).join(",")}`,
         detectedModifiers: detectedList,
       };
     }
@@ -235,7 +247,7 @@ export function evaluateModifierCompatibility(
 
   // Rule 3: Live pattern check
   const candidateLive = hasLivePattern(normCandidate);
-  const expectedLive = hasLivePattern(normExpectedWithArtist);
+  const expectedLive = hasLivePattern(normExpected) || (normExpectedArtist ? hasLivePattern(normExpectedArtist) : false);
   if (candidateLive && !expectedLive) {
     return {
       compatible: false,
