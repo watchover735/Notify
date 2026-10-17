@@ -25,6 +25,8 @@ class NotiFyApplication : Application(), ImageLoaderFactory {
         PlaybackQueueCoordinator.install(this)
         com.notify.core.playback.LocalArtworkStore.init(this)
         com.notify.telemetry.UserTelemetryManager.getInstance(this).init()
+        // B1.5: debug-only rolling file logger for stream resolution diagnostics
+        com.notify.download.stream.StreamResolverDebugLog.init(this)
 
         // Asynchronous, low-priority background backfill for existing downloaded songs
         CoroutineScope(Dispatchers.IO).launch {
