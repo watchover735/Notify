@@ -88,26 +88,92 @@ class ResolvedStreamProviderChain(
     companion object {
         private const val TAG = "StreamProviderChain"
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
-        // Global safety timeout to prevent permanent coroutine leakage if external network calls hang indefinitely.
-        // NOTE: yt-dlp per-attempt execution timeout is measured separately inside OnlineStreamResolver
-        // strictly after acquiring the ytDlpDispatcher slot, so queue-wait time is excluded from yt-dlp timeout.
         const val RESOLUTION_TIMEOUT_MS = 35_000L
         const val RACE_TIMEOUT_MS = 2_800L
+
+        /**
+         * Version-modifier words/phrases that identify a non-original recording.
+         * Matched with word-boundary semantics — NOT raw substring contains.
+         * Edit this list here; do NOT add inline checks elsewhere.
+         *
+         * Exclusions (documented):
+         *  - "live" handled separately via LIVE_PATTERNS (too many false rejects with plain contains)
+         *  - "version" excluded — appears in "original version", "album version" which are legit
+         *  - "edit" included (word-boundary prevents matching "edition", "edited")
+         */
+        val MODIFIER_WORDS: List<String> = listOf(
+            "slow", "slowed",
+            "reverb",
+            "lofi", "lo-fi",
+            "sped up", "speed up",
+            "nightcore",
+            "8d",
+            "bass boosted",
+            "mashup",
+            "remix",
+            "dj",
+            "edit",
+            "cover",
+            "karaoke",
+            "instrumental",
+            "acoustic",
+            "unplugged",
+            "jhankar",
+            "flip",
+            "mix",
+            "extended"
+        )
+
+        /**
+         * "live" is too common in legitimate song titles ("Live and Let Die", "Live Your Life",
+         * "Oasis - Live Forever"). We only treat it as a modifier when it appears in these
+         * context-specific patterns that unambiguously signal a live performance recording.
+         * Match is case-insensitive substring on the lowercased title (not word-boundary,
+         * because patterns already include surrounding punctuation/context).
+         */
+        val LIVE_PATTERNS: List<String> = listOf(
+            "(live", "[live", "- live", "– live", "— live",
+            "live at", "live from", "live version", "live performance", "live session"
+        )
+
+        /**
+         * When the provider returns a stream with a null/blank title we cannot run the full
+         * modifier filter.  We apply a tighter duration tolerance instead.
+         * LOW_CONFIDENCE_TOLERANCE_PCT: fraction of expectedDuration (e.g. 0.08 = 8%).
+         * LOW_CONFIDENCE_TOLERANCE_MIN_MS: minimum absolute tolerance floor.
+         * Change these two constants to tune without touching logic.
+         */
+        const val LOW_CONFIDENCE_TOLERANCE_PCT = 0.08   // 8% of expected duration
+        const val LOW_CONFIDENCE_TOLERANCE_MIN_MS = 8_000L  // 8 seconds minimum
+
+        /**
+         * Legit-phrase prefixes stripped from both titles before modifier comparison.
+         * Prevents "original mix" from triggering the "mix" modifier check.
+         */
+        private val LEGIT_PHRASE_PATTERNS: List<Regex> = listOf(
+            Regex("\\boriginal mix\\b"),
+            Regex("\\boriginal version\\b"),
+            Regex("\\balbum version\\b"),
+            Regex("\\bofficial\\b"),
+            Regex("\\bremastered\\b"),
+            Regex("\\bfeat\\.?\\b"),
+            // Strip "(From <movie>)" or "[From <movie>]" style suffixes
+            Regex("[\\(\\[]from [^\\)\\]]+[\\)\\]]"),
+            // Strip "(From the <movie> Soundtrack)" style
+            Regex("from the .{0,60}?soundtrack"),
+            // Strip "(Original Soundtrack)" style
+            Regex("[\\(\\[]original soundtrack[\\)\\]]"),
+            Regex("[\\(\\[]ost[\\)\\]]")
+        )
 
         private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         private val inFlightResolutions = ConcurrentHashMap<String, Deferred<Result<ResolvedStream>>>()
 
-        /**
-         * Checks if a resolution is currently in-flight for [videoId].
-         */
         fun isInFlight(videoId: String): Boolean {
             val rawId = videoId.removePrefix("youtube:")
             return inFlightResolutions.containsKey(rawId)
         }
 
-        /**
-         * Clears in-flight resolutions (primarily for testing).
-         */
         fun clearInFlight() {
             inFlightResolutions.clear()
         }
@@ -116,10 +182,149 @@ class ResolvedStreamProviderChain(
             try { Log.d(TAG, msg) } catch (_: Throwable) {}
         }
         private fun logI(msg: String) {
-            try { Log.i(TAG, msg) } catch (_: Throwable) {}
+            try {
+                Log.i(TAG, msg)
+                StreamResolverDebugLog.i(TAG, msg)
+            } catch (_: Throwable) {}
         }
         private fun logW(msg: String) {
-            try { Log.w(TAG, msg) } catch (_: Throwable) {}
+            try {
+                Log.w(TAG, msg)
+                StreamResolverDebugLog.w(TAG, msg)
+            } catch (_: Throwable) {}
+        }
+
+        /**
+         * B1.1 Helper: extracts detected modifier words/phrases from title using word-boundary matching.
+         */
+        fun extractModifiers(title: String): Set<String> {
+            if (title.isBlank()) return emptySet()
+            val norm = normalizeForModifierCheck(title.lowercase())
+            val matched = mutableSetOf<String>()
+            for (word in MODIFIER_WORDS) {
+                if (containsModifier(norm, word)) {
+                    matched.add(word)
+                }
+            }
+            if (hasLivePattern(norm)) {
+                matched.add("live")
+            }
+            return matched
+        }
+
+        /**
+         * B1.2 Candidate rejection logic.
+         * Returns true if candidate is compatible with expected title; false if rejected.
+         *
+         * Rules:
+         * 1. If expectedTitle has ANY modifier from MODIFIER_WORDS: candidate must contain at least one
+         *    expected modifier and no unrequested modifiers.
+         * 2. If expectedTitle has NO modifiers: candidate must NOT have ANY modifier from MODIFIER_WORDS.
+         * 3. Live logic: if candidate has a live pattern and expected does not -> REJECT.
+         *    Similarly, if expected has a live pattern and candidate does not -> REJECT.
+         * Fail-open: if candidateTitle is null/blank, returns true (logged as warning).
+         */
+        fun isCandidateCompatible(
+            provider: String,
+            candidateTitle: String?,
+            expectedTitle: String?,
+            expectedArtist: String? = null
+        ): Boolean {
+            if (candidateTitle.isNullOrBlank()) {
+                // Fail-open for missing metadata so audio is not silently dropped
+                logW("CANDIDATE_CHECK_SKIPPED provider=$provider reason=missing_candidate_title")
+                return true
+            }
+            if (expectedTitle.isNullOrBlank()) {
+                return true
+            }
+
+            val normCandidate = normalizeForModifierCheck(candidateTitle.lowercase())
+            val normExpected = normalizeForModifierCheck(expectedTitle.lowercase())
+            val normExpectedWithArtist = if (!expectedArtist.isNullOrBlank()) {
+                normExpected + " " + expectedArtist.lowercase()
+            } else {
+                normExpected
+            }
+
+            val expectedModifiers = extractModifiers(normExpectedWithArtist)
+            val candidateModifiers = extractModifiers(normCandidate)
+
+            // Rule 1: If expectedTitle has modifiers
+            if (expectedModifiers.isNotEmpty()) {
+                val hasMatch = expectedModifiers.any { it in candidateModifiers }
+                if (!hasMatch) {
+                    logW("CANDIDATE_REJECTED reason=MODIFIER_MISMATCH provider=$provider title=\"$candidateTitle\" expected=\"$expectedTitle\" detectedModifiers=$candidateModifiers")
+                    return false
+                }
+                val hasUnrequested = candidateModifiers.any { it !in expectedModifiers }
+                if (hasUnrequested) {
+                    logW("CANDIDATE_REJECTED reason=MODIFIER_MISMATCH provider=$provider title=\"$candidateTitle\" expected=\"$expectedTitle\" detectedModifiers=$candidateModifiers")
+                    return false
+                }
+            } else {
+                // Rule 2: If expectedTitle has NO modifiers: candidate must NOT have ANY modifier
+                if (candidateModifiers.isNotEmpty()) {
+                    logW("CANDIDATE_REJECTED reason=MODIFIER_MISMATCH provider=$provider title=\"$candidateTitle\" expected=\"$expectedTitle\" detectedModifiers=$candidateModifiers")
+                    return false
+                }
+            }
+
+            // Rule 3: Live pattern check
+            val candidateLive = hasLivePattern(normCandidate)
+            val expectedLive = hasLivePattern(normExpectedWithArtist)
+            if (candidateLive && !expectedLive) {
+                logW("CANDIDATE_REJECTED reason=MODIFIER_MISMATCH provider=$provider title=\"$candidateTitle\" expected=\"$expectedTitle\" detectedModifiers=[live]")
+                return false
+            }
+            if (expectedLive && !candidateLive) {
+                logW("CANDIDATE_REJECTED reason=MODIFIER_MISMATCH provider=$provider title=\"$candidateTitle\" expected=\"$expectedTitle\" detectedModifiers=[]")
+                return false
+            }
+
+            return true
+        }
+
+        /**
+         * Strips legit phrases ("original mix", "remastered", "feat.", "From <movie>" etc.) from
+         * a lowercased title before modifier-word comparison to prevent false positives.
+         * The returned string is only used for modifier comparison, not displayed.
+         */
+        fun normalizeForModifierCheck(lower: String): String {
+            if (lower.isBlank()) return lower
+            return try {
+                var s = lower
+                for (pattern in LEGIT_PHRASE_PATTERNS) {
+                    s = pattern.replace(s, " ")
+                }
+                s.trim()
+            } catch (_: Throwable) { lower }
+        }
+
+        /**
+         * Word-boundary modifier check.
+         * Returns true if [phrase] appears in [normalizedText] as a whole word/phrase.
+         * [normalizedText] must already be lowercased and legit-phrase-stripped.
+         */
+        fun containsModifier(normalizedText: String, phrase: String): Boolean {
+            if (normalizedText.isBlank() || phrase.isBlank()) return false
+            return try {
+                // Boundary: preceded by non-alphanumeric or start-of-string,
+                // followed by non-alphanumeric or end-of-string.
+                val pattern = Regex("(?<![a-z0-9])${Regex.fromLiteral(phrase)}(?![a-z0-9])")
+                pattern.containsMatchIn(normalizedText)
+            } catch (_: Throwable) {
+                normalizedText.contains(phrase)  // defensive fallback
+            }
+        }
+
+        /**
+         * Returns true if [normalizedText] contains any of the LIVE_PATTERNS.
+         * Patterns are matched as plain substrings (they already include context).
+         */
+        fun hasLivePattern(normalizedText: String): Boolean {
+            if (normalizedText.isBlank()) return false
+            return LIVE_PATTERNS.any { pattern -> normalizedText.contains(pattern) }
         }
     }
 
@@ -290,15 +495,16 @@ class ResolvedStreamProviderChain(
                         if (res != null && res.isSuccess) {
                             val stream = res.getOrThrow()
                             // STEP-A DIAGNOSTIC: log what the provider matched vs what we expected
-                            val matchedDurS = stream.durationMs?.let { it / 1000L }
+                            val streamDurMs = stream.durationMs  // local val: cross-module Long? cannot be smart-cast
+                            val matchedDurS = streamDurMs?.let { it / 1000L }
                             val expectedDurS = effectiveExpectedDurationMs?.let { it / 1000L }
-                            val durDeltaS = if (stream.durationMs != null && effectiveExpectedDurationMs != null)
-                                Math.abs(stream.durationMs - effectiveExpectedDurationMs) / 1000L else null
+                            val durDeltaS = if (streamDurMs != null && effectiveExpectedDurationMs != null)
+                                Math.abs(streamDurMs - effectiveExpectedDurationMs) / 1000L else null
                             logI("PROVIDER_ATTEMPT_MATCHED provider=$name videoId=$videoId" +
                                 " expectedTitle=\"$effectiveTitle\" matchedTitle=\"${stream.title}\"" +
                                 " expectedArtist=\"$effectiveArtist\"" +
                                 " expectedDurS=$expectedDurS matchedDurS=$matchedDurS durDeltaS=$durDeltaS")
-                            val isValid = validateDuration(name, stream, effectiveExpectedDurationMs, effectiveTitle)
+                            val isValid = validateStream(name, stream, effectiveExpectedDurationMs, effectiveTitle, effectiveArtist)
                             if (isValid) {
                                 // Atomic completion: first winner succeeds, others return false
                                 if (winnerDeferred.complete(name to stream)) {
@@ -306,7 +512,8 @@ class ResolvedStreamProviderChain(
                                     val elapsed = System.currentTimeMillis() - raceStart
                                     logI("RACE_WINNER provider=$name videoId=$videoId elapsedMs=$elapsed format=${stream.formatId}" +
                                         " matchedTitle=\"${stream.title}\" expectedTitle=\"$effectiveTitle\"" +
-                                        " matchedDurS=$matchedDurS expectedDurS=$expectedDurS durDeltaS=$durDeltaS")
+                                        " matchedDurMs=${stream.durationMs} expectedDurMs=$effectiveExpectedDurationMs" +
+                                        " deltaMs=$durDeltaS hasTitle=${!stream.title.isNullOrBlank()}")
                                 }
                             } else {
                                 val streamDuration = stream.durationMs
@@ -430,10 +637,24 @@ class ResolvedStreamProviderChain(
                 val rescue = synchronized(remainingJobs) { closestMismatchStream }
                 if (rescue != null) {
                     val (rescueProvider, rescueStream) = rescue
-                    val enriched = if (rescueStream.videoId.isNullOrBlank()) rescueStream.copy(videoId = videoId) else rescueStream
-                    logW("ALL_RESOLVERS_FAILED videoId=$videoId, rescuing with closest available match from $rescueProvider (delta=${closestDeltaMs}ms)")
-                    StreamUrlCache.put(enriched)
-                    return Result.success(enriched)
+                    // B1.4: Only rescue if modifier filter also passes on this candidate.
+                    // A modifier-mismatched rescue would play a wrong version silently.
+                    val rescueModifierOk = !hasModifierMismatch(
+                        rescueStream.title, effectiveTitle, effectiveArtist
+                    )
+                    if (rescueModifierOk) {
+                        val enriched = if (rescueStream.videoId.isNullOrBlank()) rescueStream.copy(videoId = videoId) else rescueStream
+                        logW("RESCUE_USED provider=$rescueProvider videoId=$videoId" +
+                            " matchedTitle=\"${rescueStream.title}\" deltaMs=$closestDeltaMs" +
+                            " reason=all_resolvers_failed_no_modifier_mismatch" +
+                            " NOT_CACHED=true")
+                        // Intentionally NOT cached: rescue streams failed validateStream and are
+                        // low-confidence; caching would persist a wrong-version across sessions.
+                        return Result.success(enriched)
+                    } else {
+                        logW("RESCUE_SKIPPED provider=$rescueProvider videoId=$videoId" +
+                            " reason=modifier_mismatch_in_rescue matchedTitle=\"${rescueStream.title}\"")
+                    }
                 }
                 logW("ALL_RESOLVERS_FAILED videoId=$videoId error=$fallbackErr")
                 return Result.failure(fallbackResult.exceptionOrNull() ?: IllegalStateException("All stream resolvers failed: $fallbackErr"))
@@ -486,10 +707,21 @@ class ResolvedStreamProviderChain(
                         val rescue = synchronized(remainingJobs) { closestMismatchStream }
                         if (rescue != null) {
                             val (rescueProvider, rescueStream) = rescue
-                            val enriched = if (rescueStream.videoId.isNullOrBlank()) rescueStream.copy(videoId = videoId) else rescueStream
-                            logW("ALL_RESOLVERS_FAILED videoId=$videoId, rescuing with closest available match from $rescueProvider (delta=${closestDeltaMs}ms)")
-                            StreamUrlCache.put(enriched)
-                            return@onAwait Result.success(enriched)
+                            // B1.4: Only rescue if modifier filter also passes.
+                            val rescueModifierOk = !hasModifierMismatch(
+                                rescueStream.title, effectiveTitle, effectiveArtist
+                            )
+                            if (rescueModifierOk) {
+                                val enriched = if (rescueStream.videoId.isNullOrBlank()) rescueStream.copy(videoId = videoId) else rescueStream
+                                logW("RESCUE_USED provider=$rescueProvider videoId=$videoId" +
+                                    " matchedTitle=\"${rescueStream.title}\" deltaMs=$closestDeltaMs" +
+                                    " reason=all_resolvers_failed_no_modifier_mismatch" +
+                                    " NOT_CACHED=true")
+                                return@onAwait Result.success(enriched)
+                            } else {
+                                logW("RESCUE_SKIPPED provider=$rescueProvider videoId=$videoId" +
+                                    " reason=modifier_mismatch_in_rescue matchedTitle=\"${rescueStream.title}\"")
+                            }
                         }
                         logW("ALL_RESOLVERS_FAILED videoId=$videoId error=$fallbackErr")
                         Result.failure(fallbackResult.exceptionOrNull() ?: IllegalStateException("All stream resolvers failed: $fallbackErr"))
@@ -504,54 +736,131 @@ class ResolvedStreamProviderChain(
         }
     }
 
-    private fun validateDuration(
+    /**
+     * Entry-point for stream validation combining modifier filter + duration filter.
+     * Never throws; a null/empty field is treated as "cannot verify" (passes that sub-check).
+     *
+     * @param expectedArtist Used to detect artist-name modifiers (e.g. "DJ Khaled") so a song
+     *   by an artist whose name contains "dj" is not falsely rejected.
+     */
+    private fun validateStream(
         providerName: String,
         stream: ResolvedStream,
         expectedDurationMs: Long?,
-        expectedTitle: String? = null
+        expectedTitle: String? = null,
+        expectedArtist: String? = null
     ): Boolean {
-        // Title modifier check if expectedTitle and stream.title are available
+        return try {
+            validateStreamInternal(providerName, stream, expectedDurationMs, expectedTitle, expectedArtist)
+        } catch (e: Throwable) {
+            // Safety net: scorer/filter must never propagate exceptions into the race.
+            logW("VALIDATE_STREAM_ERROR provider=$providerName error=${e.message} — treating as no-safe-match")
+            false
+        }
+    }
+
+    private fun validateStreamInternal(
+        providerName: String,
+        stream: ResolvedStream,
+        expectedDurationMs: Long?,
+        expectedTitle: String?,
+        expectedArtist: String?
+    ): Boolean {
         val streamTitle = stream.title
-        if (!expectedTitle.isNullOrBlank() && !streamTitle.isNullOrBlank()) {
-            val expectedLower = expectedTitle.lowercase()
-            val streamLower = streamTitle.lowercase()
-            val modifierWords = listOf(
-                "slow", "slowed", "reverb", "lofi", "lo-fi",
-                "mashup", "remix", "sped up", "speed up", "live", "extended", "8d"
+        val titleAvailable = !streamTitle.isNullOrBlank()
+
+        // ── Modifier filter (B1.1 + B1.2) ───────────────────────────────
+        // Only run full modifier filter when both stream.title and expectedTitle are present.
+        // When stream title is blank, fall through to the LOW_CONFIDENCE tight duration path.
+        if (!expectedTitle.isNullOrBlank() && titleAvailable) {
+            val isCompatible = isCandidateCompatible(
+                provider = providerName,
+                candidateTitle = streamTitle,
+                expectedTitle = expectedTitle,
+                expectedArtist = expectedArtist
             )
-            for (word in modifierWords) {
-                if (streamLower.contains(word) && !expectedLower.contains(word)) {
-                    logW("MODIFIER_MISMATCH_REJECTED provider=$providerName streamTitle=\"$streamTitle\" contains \"$word\" not in expected \"$expectedTitle\"")
-                    return false
-                }
+            if (!isCompatible) {
+                return false
             }
         }
 
+        // ── Duration filter ───────────────────────────────────────────
         if (expectedDurationMs == null || expectedDurationMs <= 0L) {
             return true
         }
         val streamDuration = stream.durationMs
         if (streamDuration == null || streamDuration <= 0L) {
+            // No stream duration: can't verify. Accept unless title was also missing
+            // (double-unknown = accept, risk is lower than false-reject).
             return true
         }
 
-        // A track is considered a duration mismatch if it is > 20% shorter or longer than expected
-        // Minimum absolute tolerance threshold of 15 seconds to avoid rejecting minor tempo/silence differences
-        val toleranceMs = maxOf(15_000L, (expectedDurationMs * 0.20).toLong())
-        val minAllowedMs = expectedDurationMs - toleranceMs
-        val maxAllowedMs = expectedDurationMs + toleranceMs
+        // B1.3: If stream title was blank, use LOW_CONFIDENCE tight tolerance instead of ±20%.
+        val lowerToleranceMs: Long
+        val upperToleranceMs: Long
+        if (!titleAvailable) {
+            val lowConf = maxOf(
+                LOW_CONFIDENCE_TOLERANCE_MIN_MS,
+                (expectedDurationMs * LOW_CONFIDENCE_TOLERANCE_PCT).toLong()
+            )
+            lowerToleranceMs = lowConf
+            upperToleranceMs = lowConf
+        } else {
+            // Normal asymmetric tolerance: lower ±20%, upper ±20% (unchanged from FIX A).
+            // DO NOT tighten the upper tolerance here — real data needed first.
+            val norm = maxOf(15_000L, (expectedDurationMs * 0.20).toLong())
+            lowerToleranceMs = norm
+            upperToleranceMs = norm
+        }
 
-        // Also check if stream is an obvious preview/snippet (e.g. <= 35s when expected > 60s)
+        val minAllowedMs = expectedDurationMs - lowerToleranceMs
+        val maxAllowedMs = expectedDurationMs + upperToleranceMs
         val isSnippet = expectedDurationMs > 60_000L && streamDuration <= 35_000L
 
         if (streamDuration < minAllowedMs || streamDuration > maxAllowedMs || isSnippet) {
-            val expSec = expectedDurationMs / 1000L
-            val gotSec = streamDuration / 1000L
-            logW("DURATION_MISMATCH_REJECTED provider=$providerName expected=${expSec}s got=${gotSec}s (tolerance=${toleranceMs / 1000}s)")
+            val expSec   = expectedDurationMs / 1000L
+            val gotSec   = streamDuration / 1000L
+            val deltaS   = Math.abs(streamDuration - expectedDurationMs) / 1000L
+            val confTag  = if (!titleAvailable) "LOW_CONFIDENCE" else "NORMAL"
+            logW("DURATION_MISMATCH_REJECTED provider=$providerName" +
+                " expected=${expSec}s got=${gotSec}s delta=${deltaS}s" +
+                " lowerTol=${lowerToleranceMs / 1000}s upperTol=${upperToleranceMs / 1000}s" +
+                " isSnippet=$isSnippet confidence=$confTag")
             return false
+        }
+
+        if (!titleAvailable) {
+            logI("LOW_CONFIDENCE_ACCEPTED provider=$providerName videoId=unknown" +
+                " streamDurS=${streamDuration / 1000L} expectedDurS=${expectedDurationMs / 1000L}" +
+                " tolerance=${lowerToleranceMs / 1000L}s")
         }
         return true
     }
+
+    /**
+     * Returns true if [streamTitle] has a modifier mismatch against [expectedTitle]/[expectedArtist].
+     * Used by rescue logic (B1.4) to avoid rescuing with a wrong-version stream.
+     * Returns false (= no mismatch, rescue is safe) when streamTitle is null/blank.
+     */
+    private fun hasModifierMismatch(
+        streamTitle: String?,
+        expectedTitle: String?,
+        expectedArtist: String?
+    ): Boolean {
+        if (streamTitle.isNullOrBlank() || expectedTitle.isNullOrBlank()) return false
+        return !isCandidateCompatible("rescue_check", streamTitle, expectedTitle, expectedArtist)
+    }
+
+    internal fun normalizeForModifierCheck(lower: String): String = Companion.normalizeForModifierCheck(lower)
+    internal fun containsModifier(normalizedText: String, phrase: String): Boolean = Companion.containsModifier(normalizedText, phrase)
+    internal fun hasLivePattern(normalizedText: String): Boolean = Companion.hasLivePattern(normalizedText)
+    internal fun extractModifiers(title: String): Set<String> = Companion.extractModifiers(title)
+    internal fun isCandidateCompatible(
+        provider: String,
+        candidateTitle: String?,
+        expectedTitle: String?,
+        expectedArtist: String? = null
+    ): Boolean = Companion.isCandidateCompatible(provider, candidateTitle, expectedTitle, expectedArtist)
 
     data class FastVideoMeta(
         val title: String,
