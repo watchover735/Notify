@@ -40,12 +40,14 @@ class JioSaavnStreamResolver(
         expectedArtist: String? = null
     ): Result<ResolvedStream> = withContext(Dispatchers.IO) {
         val trimmedQuery = query.trim()
-        if (trimmedQuery.isBlank()) {
+        val sanitizedQuery = ResolvedStreamProviderChain.sanitizeArtist(trimmedQuery) ?: trimmedQuery
+        val sanitizedExpectedArtist = ResolvedStreamProviderChain.sanitizeArtist(expectedArtist)
+        if (sanitizedQuery.isBlank()) {
             return@withContext Result.failure(IllegalArgumentException("Empty query for JioSaavn"))
         }
 
         val start = System.currentTimeMillis()
-        Log.i(TAG, "JIOSAAVN_ATTEMPT_START query=\"$trimmedQuery\"")
+        Log.i(TAG, "JIOSAAVN_ATTEMPT_START query=\"$sanitizedQuery\"")
 
         val token = authRepository?.getCurrentAccessToken()
         if (token.isNullOrBlank()) {
@@ -57,7 +59,7 @@ class JioSaavnStreamResolver(
         try {
             withTimeout(timeoutMs) {
                 val payload = JSONObject().apply {
-                    put("query", trimmedQuery)
+                    put("query", sanitizedQuery)
                     if (!videoId.isNullOrBlank()) {
                         put("videoId", videoId)
                     }
@@ -67,8 +69,8 @@ class JioSaavnStreamResolver(
                     if (!expectedTitle.isNullOrBlank()) {
                         put("expectedTitle", expectedTitle)
                     }
-                    if (!expectedArtist.isNullOrBlank()) {
-                        put("expectedArtist", expectedArtist)
+                    if (!sanitizedExpectedArtist.isNullOrBlank()) {
+                        put("expectedArtist", sanitizedExpectedArtist)
                     }
                 }
 

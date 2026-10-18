@@ -445,4 +445,47 @@ class VersionModifierFilterTest {
         assertFalse("'slowly' must NOT trigger 'slowed'", slowlyMods.contains("slowed"))
         assertTrue("'slowly' must have no modifiers", slowlyMods.isEmpty())
     }
+
+    // ─── B.3 New Modifiers Detection ──────────────────────────────────────────
+
+    @Test
+    fun b3_newModifiers_rejectedAgainstCleanExpected() {
+        val testCases = listOf(
+            "Jeene Laga Hoon (Reprise)",
+            "Jeene Laga Hoon (Female Version)",
+            "Jeene Laga Hoon (Male Version)",
+            "Jeene Laga Hoon (Sad Version)",
+            "Jeene Laga Hoon (Remake)",
+            "Jeene Laga Hoon (Tribute)",
+            "Jeene Laga Hoon (Revisited)",
+            "Jeene Laga Hoon (Rework)",
+            "Jeene Laga Hoon (Redux)",
+            "Jeene Laga Hoon (Unwind Mix)",
+            "Jeene Laga Hoon (Chillout)"
+        )
+        for (candidate in testCases) {
+            assertFalse(
+                "'$candidate' must be REJECTED against clean 'Jeene Laga Hoon'",
+                ResolvedStreamProviderChain.isCandidateCompatible("test", candidate, "Jeene Laga Hoon", "Atif Aslam")
+            )
+        }
+    }
+
+    // ─── B.5 Artist Suffix Sanitization ───────────────────────────────────────
+
+    @Test
+    fun b5_sanitizeArtist_stripsNoisyChannelSuffixes() {
+        org.junit.Assert.assertEquals("Atif Aslam", ResolvedStreamProviderChain.sanitizeArtist("Atif Aslam - Topic"))
+        org.junit.Assert.assertEquals("Atif Aslam", ResolvedStreamProviderChain.sanitizeArtist("Atif Aslam Topic"))
+        org.junit.Assert.assertEquals("Arijit Singh", ResolvedStreamProviderChain.sanitizeArtist("Arijit Singh - VEVO"))
+        org.junit.Assert.assertEquals("Taylor Swift", ResolvedStreamProviderChain.sanitizeArtist("Taylor Swift VEVO"))
+        org.junit.Assert.assertEquals("TaylorSwift", ResolvedStreamProviderChain.sanitizeArtist("TaylorSwiftVEVO"))
+        org.junit.Assert.assertEquals("Tips", ResolvedStreamProviderChain.sanitizeArtist("Tips Official"))
+        org.junit.Assert.assertEquals("Tips", ResolvedStreamProviderChain.sanitizeArtist("Tips - Official"))
+        org.junit.Assert.assertEquals("DJ Khaled", ResolvedStreamProviderChain.sanitizeArtist("DJ Khaled"))
+        org.junit.Assert.assertEquals("Topic", ResolvedStreamProviderChain.sanitizeArtist("Topic"))
+        org.junit.Assert.assertEquals(null, ResolvedStreamProviderChain.sanitizeArtist(null))
+        org.junit.Assert.assertEquals(null, ResolvedStreamProviderChain.sanitizeArtist("   "))
+    }
 }
+

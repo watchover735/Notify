@@ -121,7 +121,19 @@ class ResolvedStreamProviderChain(
             "jhankar",
             "flip",
             "mix",
-            "extended"
+            "extended",
+            "reprise",
+            "female",
+            "male",
+            "sad",
+            "remake",
+            "tribute",
+            "revisited",
+            "rework",
+            "redux",
+            "unwind",
+            "chill",
+            "chillout"
         )
 
         /**
@@ -326,6 +338,29 @@ class ResolvedStreamProviderChain(
             if (normalizedText.isBlank()) return false
             return LIVE_PATTERNS.any { pattern -> normalizedText.contains(pattern) }
         }
+
+        /**
+         * B.5 Artist Suffix Cleaner:
+         * Strips noisy YouTube artist channel suffixes such as:
+         *   - " - Topic", " Topic"
+         *   - " - VEVO", " VEVO", "VEVO"
+         *   - " - Official", " Official"
+         * so downstream resolver queries (JioSaavn, SoundCloud) and expectedArtist
+         * matching use clean real artist names instead of channel suffixes.
+         */
+        fun sanitizeArtist(artist: String?): String? {
+            if (artist.isNullOrBlank()) return null
+            val cleaned = artist.trim()
+            val pattern = Regex("""(?i)(?:\s*[-–—]\s*|\s+)(?:topic|vevo|official)$|(?<=[a-z0-9])vevo$""", RegexOption.IGNORE_CASE)
+            val match = pattern.find(cleaned)
+            if (match != null && match.range.first > 0) {
+                val stripped = cleaned.substring(0, match.range.first).trim()
+                if (stripped.isNotEmpty()) {
+                    return stripped
+                }
+            }
+            return cleaned.takeIf { it.isNotEmpty() }
+        }
     }
 
     override suspend fun resolveStream(canonicalYoutubeUrl: String): Result<ResolvedStream> =
@@ -449,7 +484,7 @@ class ResolvedStreamProviderChain(
         }
 
         var effectiveTitle = title?.trim()?.takeIf { it.isNotEmpty() }
-        var effectiveArtist = artist?.trim()?.takeIf { it.isNotEmpty() && !isGenericArtist(it) }
+        var effectiveArtist = sanitizeArtist(artist?.trim()?.takeIf { it.isNotEmpty() && !isGenericArtist(it) })
         var effectiveExpectedDurationMs = expectedDurationMs
         var query = listOfNotNull(effectiveTitle, effectiveArtist).joinToString(" ").trim()
 
@@ -462,7 +497,7 @@ class ResolvedStreamProviderChain(
                     effectiveTitle = fetchedMeta.title.trim().takeIf { it.isNotEmpty() }
                 }
                 if (effectiveArtist.isNullOrBlank()) {
-                    effectiveArtist = fetchedMeta.author.trim().takeIf { it.isNotEmpty() && !isGenericArtist(it) }
+                    effectiveArtist = sanitizeArtist(fetchedMeta.author.trim().takeIf { it.isNotEmpty() && !isGenericArtist(it) })
                 }
                 if (effectiveExpectedDurationMs == null && fetchedMeta.durationMs != null) {
                     effectiveExpectedDurationMs = fetchedMeta.durationMs
