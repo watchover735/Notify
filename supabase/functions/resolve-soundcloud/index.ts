@@ -221,13 +221,19 @@ Deno.serve(async (req: Request) => {
       const dur = typeof t?.duration === "number" && t.duration > 0 ? t.duration : null;
       const decodedTitle = decodeHtmlEntities(t?.title || "");
       const decodedArtist = decodeHtmlEntities(
-        t?.user?.username || t?.user?.artist_name || t?.artist || ""
+        [t?.publisher_metadata?.artist, t?.user?.username, t?.user?.artist_name, t?.artist]
+          .filter(Boolean)
+          .join(", ")
       );
+      const label = t?.publisher_metadata?.album_title ? decodeHtmlEntities(String(t.publisher_metadata.album_title)) : null;
+      const uploader = t?.user?.username ? decodeHtmlEntities(String(t.user.username)) : null;
 
       return {
         id: t?.id || String(idx),
         title: decodedTitle,
         artist: decodedArtist,
+        label,
+        uploader,
         durationMs: dur,
         raw: t,
       };

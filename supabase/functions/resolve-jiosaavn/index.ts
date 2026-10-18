@@ -185,14 +185,30 @@ Deno.serve(async (req: Request) => {
       }
 
       const decodedTitle = decodeHtmlEntities(item?.song || item?.title || "");
-      const decodedArtist = decodeHtmlEntities(
-        item?.primary_artists || item?.singers || item?.music || item?.artist || ""
-      );
+      const artistsList: string[] = [];
+      if (item?.more_info?.artistMap?.primary_artists) {
+        for (const a of item.more_info.artistMap.primary_artists) {
+          if (a?.name) artistsList.push(a.name);
+        }
+      }
+      if (item?.more_info?.artistMap?.artists) {
+        for (const a of item.more_info.artistMap.artists) {
+          if ((a?.role === "singer" || a?.role === "primary_artists") && a?.name) {
+            artistsList.push(a.name);
+          }
+        }
+      }
+      if (item?.primary_artists) artistsList.push(item.primary_artists);
+      if (item?.singers) artistsList.push(item.singers);
+      if (item?.artist) artistsList.push(item.artist);
+      const decodedArtist = decodeHtmlEntities(Array.from(new Set(artistsList)).join(", "));
+      const label = item?.more_info?.label ? decodeHtmlEntities(String(item.more_info.label)) : null;
 
       return {
         id: item?.id || String(idx),
         title: decodedTitle,
         artist: decodedArtist,
+        label,
         durationMs,
         raw: item,
       };

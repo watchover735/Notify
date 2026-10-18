@@ -10,6 +10,33 @@
 
 export const MIN_SCORE = 45; // Minimum score threshold (out of 100) to accept candidate
 
+export const ARTIST_MIN_TOKEN_LEN = 3;
+export const EXACT_DURATION_DELTA_MS = 3000; // 3 seconds tolerance for exact duration match
+
+export const TRUSTED_LABELS: string[] = [
+  "t-series", "tseries",
+  "tips official", "tips music", "tips",
+  "sony music", "sonymusic",
+  "zee music", "zeemusic",
+  "saregama",
+  "yrf", "yash raj films",
+  "universal music",
+  "times music",
+  "eros now", "eros music",
+  "speed records",
+  "geet mp3",
+  "white hill"
+];
+
+export const LABEL_PATTERNS: RegExp[] = [
+  /\bvevo\b/i,
+  /\btopic\b/i,
+  /\bofficial\b/i,
+  /\brecords\b/i,
+  /\bmusic\b/i,
+  /\bentertainment\b/i
+];
+
 export const MODIFIER_WORDS: string[] = [
   "slow", "slowed",
   "reverb",
@@ -30,7 +57,20 @@ export const MODIFIER_WORDS: string[] = [
   "jhankar",
   "flip",
   "mix",
-  "extended"
+  "extended",
+  // B.3 Additions:
+  "reprise",
+  "female",
+  "male",
+  "sad",
+  "remake",
+  "tribute",
+  "revisited",
+  "rework",
+  "redux",
+  "unwind",
+  "chill",
+  "chillout"
 ];
 
 export const LIVE_PATTERNS: string[] = [
@@ -56,6 +96,8 @@ export interface CandidateTrack {
   title: string;
   artist?: string | null;
   durationMs?: number | null;
+  label?: string | null;
+  uploader?: string | null;
   raw?: any;
 }
 
@@ -65,6 +107,7 @@ export interface ScoredCandidate {
   durationScore: number;
   titleScore: number;
   artistScore: number;
+  labelBoost: number;
   isRejected: boolean;
   rejectReason?: string;
   detectedModifiers: string[];
@@ -266,6 +309,111 @@ export function evaluateModifierCompatibility(
   return { compatible: true, detectedModifiers: detectedList };
 }
 
+export function isLabelOrChannel(name?: string | null): boolean {
+  if (!name || !name.trim()) return false;
+  const lower = name.trim().toLowerCase();
+  if (TRUSTED_LABELS.some((tl) => lower.includes(tl))) return true;
+  return LABEL_PATTERNS.some((pat) => pat.test(lower));
+}
+
+export function isTrustedLabel(labelOrUploader?: string | null): boolean {
+  if (!labelOrUploader || !labelOrUploader.trim()) return false;
+  const lower = labelOrUploader.trim().toLowerCase();
+  return TRUSTED_LABELS.some((tl) => lower.includes(tl));
+}
+
+/**
+ * Evaluates the artist gate for candidate tracks.
+ * Returns { pass: boolean, reason?: string, isLabelExpected: boolean }.
+ */
+export function evaluateArtistGate(
+  candidate: CandidateTrack,
+  expectedArtist: string | null | undefined,
+  expectedTitle: string,
+  expectedDurationMs: number | null | undefined
+): { pass: boolean; reason?: string; isLabelExpected: boolean } {
+  if (!expectedArtist || !expectedArtist.trim()) {
+    return { pass: true, isLabelExpected: false };
+  }
+
+  const normExpectedArtist = expectedArtist.trim();
+  const isLabel = isLabelOrChannel(normExpectedArtist);
+
+  if (isLabel) {
+    // LABEL / CHANNEL case:
+    // Accept ONLY IF (label or uploader is TRUSTED_LABELS) OR (title exact + duration delta <= 3s)
+    const hasTrustedLabel = isTrustedLabel(candidate.label) || isTrustedLabel(candidate.uploader);
+    const candidateTokens = tokenize(candidate.title);
+    const expectedTokens = tokenize(expectedTitle);
+    const isExactTitle = expectedTokens.length > 0 && candidateTokens.length > 0 &&
+      expectedTokens.length === candidateTokens.length &&
+      expectedTokens.every((t) => candidateTokens.includes(t));
+    const durationDelta = (expectedDurationMs && candidate.durationMs)
+      ? Math.abs(candidate.durationMs - expectedDurationMs)
+      : null;
+    const isExactDuration = durationDelta !== null && durationDelta <= EXACT_DURATION_DELTA_MS;
+
+    if (hasTrustedLabel || (isExactTitle && isExactDuration)) {
+      return { pass: true, isLabelExpected: true };
+    }
+    return { pass: false, reason: "unverified_label_candidate", isLabelExpected: true };
+  }
+
+  // REAL ARTIST case:
+  const candidateArtistRaw = [
+    candidate.artist,
+    candidate.uploader,
+    candidate.label
+  ].filter(Boolean).join(" ").trim();
+
+  // Exceptions (reject NAHI, par tight check):
+  // candidate artist empty/missing ho, ya non-Latin script me ho (Devanagari etc.)
+  const candidateArtistMissing = !candidateArtistRaw;
+  const candidateNonLatin = containsDevanagari(candidateArtistRaw);
+  const expectedNonLatin = containsDevanagari(normExpectedArtist);
+
+  if (candidateArtistMissing || candidateNonLatin || expectedNonLatin) {
+    const candidateTokens = tokenize(candidate.title);
+    const expectedTokens = tokenize(expectedTitle);
+    const isExactTitle = expectedTokens.length > 0 && candidateTokens.length > 0 &&
+      expectedTokens.length === candidateTokens.length &&
+      expectedTokens.every((t) => candidateTokens.includes(t));
+    const durationDelta = (expectedDurationMs && candidate.durationMs)
+      ? Math.abs(candidate.durationMs - expectedDurationMs)
+      : null;
+    const isExactDuration = durationDelta !== null && durationDelta <= EXACT_DURATION_DELTA_MS;
+
+    if (isExactTitle && isExactDuration) {
+      return { pass: true, isLabelExpected: false };
+    }
+    return { pass: false, reason: "low_confidence_unverified_artist", isLabelExpected: false };
+  }
+
+  // Split expectedArtist on &, ,, feat, ft, x, and
+  const artistParts = normExpectedArtist
+    .split(/\s*(?:&|,|\bfeat\.?|\bft\.?|\bx\b|\band\b)\s*/i)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+
+  const expectedArtistTokens: string[] = [];
+  for (const part of artistParts) {
+    const toks = tokenize(part).filter((t) => t.length >= ARTIST_MIN_TOKEN_LEN);
+    expectedArtistTokens.push(...toks);
+  }
+
+  if (expectedArtistTokens.length === 0) {
+    return { pass: true, isLabelExpected: false };
+  }
+
+  const candTokens = new Set(tokenize(candidateArtistRaw).filter((t) => t.length >= ARTIST_MIN_TOKEN_LEN));
+  const hasMatch = expectedArtistTokens.some((tok) => candTokens.has(tok));
+  if (!hasMatch) {
+    return { pass: false, reason: "artist_mismatch", isLabelExpected: false };
+  }
+
+  return { pass: true, isLabelExpected: false };
+}
+
 /**
  * Scores a candidate track against options.
  * Output score ranges from 0 to 100.
@@ -293,13 +441,36 @@ export function scoreCandidate(
       durationScore: 0,
       titleScore: 0,
       artistScore: 0,
+      labelBoost: 0,
       isRejected: true,
       rejectReason: modCheck.reason,
       detectedModifiers: modCheck.detectedModifiers,
     };
   }
 
-  // 2. Duration score (Max 50 points)
+  // 2. Artist gate evaluation (B.1)
+  const artistGate = evaluateArtistGate(
+    candidate,
+    effectiveArtist,
+    effectiveExpectedTitle,
+    expectedDur
+  );
+
+  if (!artistGate.pass) {
+    return {
+      candidate,
+      score: 0,
+      durationScore: 0,
+      titleScore: 0,
+      artistScore: 0,
+      labelBoost: 0,
+      isRejected: true,
+      rejectReason: artistGate.reason,
+      detectedModifiers: modCheck.detectedModifiers,
+    };
+  }
+
+  // 3. Duration score (Max 50 points)
   let durationScore = 35; // neutral default when duration is unknown
   if (expectedDur !== null && candidateDur !== null) {
     const deltaMs = Math.abs(candidateDur - expectedDur);
@@ -322,7 +493,7 @@ export function scoreCandidate(
     }
   }
 
-  // 3. Title token score (Max 35 points)
+  // 4. Symmetric title token score (B.2 - Max 35 points)
   let titleScore = 20; // default baseline
   const expectedTokens = tokenize(effectiveExpectedTitle);
   const candidateTokens = tokenize(candidate.title);
@@ -332,8 +503,6 @@ export function scoreCandidate(
   const candidateDevanagari = containsDevanagari(candidate.title);
 
   if (expectedDevanagari !== candidateDevanagari && (expectedDevanagari || candidateDevanagari)) {
-    // Cross-script comparison: Devanagari query vs Romanized song title or vice versa.
-    // Token overlap would be artificially 0, so give neutral weight to avoid false-rejecting.
     titleScore = 25;
   } else if (expectedTokens.length > 0 && candidateTokens.length > 0) {
     const candidateSet = new Set(candidateTokens);
@@ -343,30 +512,42 @@ export function scoreCandidate(
         matchCount++;
       }
     }
-    const overlapRatio = matchCount / expectedTokens.length;
+    const maxTokens = Math.max(expectedTokens.length, candidateTokens.length);
+    const overlapRatio = maxTokens > 0 ? matchCount / maxTokens : 0;
     titleScore = Math.round(overlapRatio * 35);
   }
 
-  // 4. Artist score (Max 15 points)
+  // 5. Artist score (Max 15 points)
   let artistScore = 5; // default baseline
-  const artistToCheck = effectiveArtist || (options.query ? options.query : "");
-  const artistTokens = tokenize(artistToCheck);
-  const candidateArtistTokens = tokenize(candidate.artist || "");
-  const candidateAllTokens = tokenize(`${candidate.title} ${candidate.artist || ""}`);
+  if (artistGate.isLabelExpected) {
+    artistScore = 10; // neutral positive baseline when expected artist is a label/channel
+  } else {
+    const artistToCheck = effectiveArtist || (options.query ? options.query : "");
+    const artistTokens = tokenize(artistToCheck);
+    const candidateArtistRaw = [candidate.title, candidate.artist, candidate.uploader, candidate.label].filter(Boolean).join(" ");
+    const candidateAllTokens = tokenize(candidateArtistRaw);
 
-  if (artistTokens.length > 0) {
-    const candidateSet = new Set(candidateAllTokens);
-    let matched = 0;
-    for (const tok of artistTokens) {
-      if (candidateSet.has(tok)) {
-        matched++;
+    if (artistTokens.length > 0) {
+      const candidateSet = new Set(candidateAllTokens);
+      let matched = 0;
+      for (const tok of artistTokens) {
+        if (candidateSet.has(tok)) {
+          matched++;
+        }
       }
+      const ratio = matched / artistTokens.length;
+      artistScore = Math.round(ratio * 15);
     }
-    const ratio = matched / artistTokens.length;
-    artistScore = Math.round(ratio * 15);
   }
 
-  const totalScore = durationScore + titleScore + artistScore;
+  // 6. Trusted Label Boost (B.4 - +10 points)
+  let labelBoost = 0;
+  if (isTrustedLabel(candidate.label) || isTrustedLabel(candidate.uploader)) {
+    labelBoost = 10;
+  }
+
+  const rawTotal = durationScore + titleScore + artistScore + labelBoost;
+  const totalScore = Math.min(100, rawTotal);
 
   return {
     candidate,
@@ -374,6 +555,7 @@ export function scoreCandidate(
     durationScore,
     titleScore,
     artistScore,
+    labelBoost,
     isRejected: totalScore < MIN_SCORE,
     rejectReason: totalScore < MIN_SCORE ? `low_score_${totalScore}_below_${MIN_SCORE}` : undefined,
     detectedModifiers: modCheck.detectedModifiers,

@@ -174,3 +174,396 @@ Deno.test("caseL_tie_break_by_duration", () => {
   assertNotEquals(winner, null);
   assertEquals(winner?.id, "2", "Candidate with closest duration must win tie-break");
 });
+
+// ============================================================================
+// B.6 — STEP A REAL CANDIDATE FIXTURES & 12 REGRESSION TESTS
+// ============================================================================
+
+// (1) STEP A JioSaavn Candidates Fixture Test
+Deno.test("stepA_jiosaavn_jeene_laga_hoon_rejected_returns_null", () => {
+  const jiosaavnCandidates: CandidateTrack[] = [
+    {
+      id: "yU2bZuPl",
+      title: "Jeene Laga Hoon (Instrumental)",
+      artist: "Sachin-Jigar",
+      label: "Tips Music Limited",
+      durationMs: 546000
+    },
+    {
+      id: "VGYtEAg3",
+      title: "Jeene Laga Hoon (From\"Ramaiya Vastavaiya\") [Instrumental]",
+      artist: "Sachin-Jigar",
+      label: "Tips Music Limited",
+      durationMs: 546000
+    },
+    {
+      id: "AkL4O_5Z",
+      title: "Jeene Laga Hoon",
+      artist: "Jakiruddin Khan",
+      label: "JMR MUSIC STUDIO",
+      durationMs: 230000
+    },
+    {
+      id: "SywIDLbE",
+      title: "Jeene Laga Hoon",
+      artist: "Aashu Soni",
+      label: "Aashu soni",
+      durationMs: 197000
+    },
+    {
+      id: "-3xrUGkv",
+      title: "Jeene Laga Hoon x Raatein Guzaari (Mashup)",
+      artist: "Aditya Rikhari, Shreya Ghoshal, Aashu Soni",
+      label: "Tips Music Limited",
+      durationMs: 194000
+    }
+  ];
+
+  const { winner, scoredList } = selectBestCandidate(jiosaavnCandidates, {
+    query: "Jeene Laga Hoon Atif Aslam & Shreya Ghoshal",
+    expectedTitle: "Jeene Laga Hoon",
+    expectedArtist: "Atif Aslam & Shreya Ghoshal",
+    expectedDurationMs: 236000
+  });
+
+  // Verify each candidate is rejected
+  const j1 = scoredList.find((s) => s.candidate.id === "yU2bZuPl");
+  assertEquals(j1?.isRejected, true);
+  assertEquals(j1?.rejectReason, "unrequested_modifier: instrumental");
+
+  const j2 = scoredList.find((s) => s.candidate.id === "VGYtEAg3");
+  assertEquals(j2?.isRejected, true);
+  assertEquals(j2?.rejectReason, "unrequested_modifier: instrumental");
+
+  const j3 = scoredList.find((s) => s.candidate.id === "AkL4O_5Z");
+  assertEquals(j3?.isRejected, true, "Jakiruddin Khan must be rejected for Atif Aslam expected artist");
+  assertEquals(j3?.rejectReason, "artist_mismatch");
+
+  const j4 = scoredList.find((s) => s.candidate.id === "SywIDLbE");
+  assertEquals(j4?.isRejected, true, "Aashu Soni must be rejected for Atif Aslam expected artist");
+  assertEquals(j4?.rejectReason, "artist_mismatch");
+
+  const j5 = scoredList.find((s) => s.candidate.id === "-3xrUGkv");
+  assertEquals(j5?.isRejected, true);
+  assertEquals(j5?.rejectReason, "unrequested_modifier: mashup");
+
+  // Winner must be null (no safe match, letting YouTube FastInnerTube win the race)
+  assertEquals(winner, null, "JioSaavn winner must be null when all candidates fail");
+});
+
+// (2) STEP A SoundCloud Candidates Fixture Test
+Deno.test("stepA_soundcloud_jeene_laga_hoon_rejected_returns_null", () => {
+  const soundcloudCandidates: CandidateTrack[] = [
+    {
+      id: 337965409,
+      title: "Jeena Laga Hoon ft.Atif Aslam (Priom FTW Remix) 2017 Future EDM.mp3",
+      uploader: "Priom FTW",
+      artist: "Priom FTW",
+      durationMs: 267461
+    },
+    {
+      id: 2403951459,
+      title: "Atif Aslam - Tera Hone Laga Hoon (Kaushal Edit)",
+      uploader: "Kaushal (IN)",
+      artist: "Kaushal (IN)",
+      durationMs: 330046
+    },
+    {
+      id: 1201005727,
+      title: "Tera Hoone laga hoon | Atif Aslam | Cover",
+      uploader: "Avi",
+      artist: "Avi",
+      durationMs: 173140
+    },
+    {
+      id: 1399239274,
+      title: "Atif_Aslam_Mashup___Amtee___Tu_Jane_Na___Tera_Hone_Laga_Hoon_____Chill_Trap_Beats(256k).mp3",
+      uploader: "User 264404021",
+      artist: "User 264404021",
+      durationMs: 401219
+    },
+    {
+      id: 933679369,
+      title: "Tera Hone Laga Hoon - Atif Aslam (Night Mix)",
+      uploader: "Shermix",
+      artist: "Shermix",
+      durationMs: 200080
+    },
+    {
+      id: 1353301675,
+      title: "tera hone laga hoon lofi | atif aslam | slowed, reverb & lofi",
+      uploader: "Beats by Shaz",
+      artist: "Beats by Shaz",
+      durationMs: 423928
+    }
+  ];
+
+  const { winner } = selectBestCandidate(soundcloudCandidates, {
+    query: "Jeene Laga Hoon Atif Aslam",
+    expectedTitle: "Jeene Laga Hoon",
+    expectedArtist: "Atif Aslam",
+    expectedDurationMs: 236000
+  });
+
+  assertEquals(winner, null, "SoundCloud must return null for remix/cover/mashup candidates");
+});
+
+// (3) B.3 New Modifiers Detection Tests
+Deno.test("modifiers_new_words_detection", () => {
+  const newModifiers = [
+    { title: "Jeene Laga Hoon (Reprise)", mod: "reprise" },
+    { title: "Jeene Laga Hoon (Female Version)", mod: "female" },
+    { title: "Jeene Laga Hoon (Male Version)", mod: "male" },
+    { title: "Jeene Laga Hoon (Sad Version)", mod: "sad" },
+    { title: "Jeene Laga Hoon (Remake)", mod: "remake" },
+    { title: "Jeene Laga Hoon (Tribute)", mod: "tribute" },
+    { title: "Jeene Laga Hoon (Revisited)", mod: "revisited" },
+    { title: "Jeene Laga Hoon (Rework)", mod: "rework" },
+    { title: "Jeene Laga Hoon (Redux)", mod: "redux" },
+    { title: "Jeene Laga Hoon (Unwind Mix)", mod: "unwind" },
+    { title: "Jeene Laga Hoon (Chillout)", mod: "chill" },
+  ];
+
+  for (const item of newModifiers) {
+    const comp = evaluateModifierCompatibility(item.title, "Jeene Laga Hoon", "Atif Aslam");
+    assertEquals(comp.compatible, false, `${item.title} must be rejected by modifier ${item.mod}`);
+  }
+});
+
+// ============================================================================
+// 12 REGRESSION TESTS (ALL MUST ACCEPT)
+// ============================================================================
+
+// Regression 1: "Arijit Singh" vs "Arijit Singh, Pritam"
+Deno.test("regression_1_artist_arijit_vs_arijit_pritam", () => {
+  const cand: CandidateTrack = {
+    id: "r1",
+    title: "Kesariya",
+    artist: "Arijit Singh, Pritam",
+    durationMs: 268000
+  };
+  const scored = scoreCandidate(cand, {
+    query: "Kesariya",
+    expectedTitle: "Kesariya",
+    expectedArtist: "Arijit Singh",
+    expectedDurationMs: 268000
+  });
+  assertEquals(scored.isRejected, false);
+  assertEquals(scored.score >= MIN_SCORE, true);
+});
+
+// Regression 2: "Atif Aslam & Shreya Ghoshal" vs "Atif Aslam"
+Deno.test("regression_2_artist_atif_shreya_vs_atif", () => {
+  const cand: CandidateTrack = {
+    id: "r2",
+    title: "Jeene Laga Hoon",
+    artist: "Atif Aslam",
+    durationMs: 236000
+  };
+  const scored = scoreCandidate(cand, {
+    query: "Jeene Laga Hoon",
+    expectedTitle: "Jeene Laga Hoon",
+    expectedArtist: "Atif Aslam & Shreya Ghoshal",
+    expectedDurationMs: 236000
+  });
+  assertEquals(scored.isRejected, false);
+  assertEquals(scored.score >= MIN_SCORE, true);
+});
+
+// Regression 3: expectedArtist = "T-Series" + trusted label candidate
+Deno.test("regression_3_expected_label_tseries_accepted", () => {
+  const cand: CandidateTrack = {
+    id: "r3",
+    title: "Tum Hi Ho",
+    artist: "Arijit Singh",
+    label: "T-Series",
+    durationMs: 262000
+  };
+  const scored = scoreCandidate(cand, {
+    query: "Tum Hi Ho",
+    expectedTitle: "Tum Hi Ho",
+    expectedArtist: "T-Series",
+    expectedDurationMs: 262000
+  });
+  assertEquals(scored.isRejected, false);
+  assertEquals(scored.score >= MIN_SCORE, true);
+});
+
+// Regression 4: expectedArtist = "Tips Official" + trusted label candidate
+Deno.test("regression_4_expected_label_tips_official_accepted", () => {
+  const cand: CandidateTrack = {
+    id: "r4",
+    title: "Jeene Laga Hoon",
+    artist: "Atif Aslam",
+    label: "Tips Music Limited",
+    durationMs: 236000
+  };
+  const scored = scoreCandidate(cand, {
+    query: "Jeene Laga Hoon",
+    expectedTitle: "Jeene Laga Hoon",
+    expectedArtist: "Tips Official",
+    expectedDurationMs: 236000
+  });
+  assertEquals(scored.isRejected, false);
+  assertEquals(scored.score >= MIN_SCORE, true);
+});
+
+// Regression 5: "X - Topic" channel expected artist
+Deno.test("regression_5_topic_channel_expected_artist_accepted", () => {
+  const cand: CandidateTrack = {
+    id: "r5",
+    title: "Kesariya",
+    artist: "Pritam, Arijit Singh",
+    durationMs: 268000
+  };
+  const scored = scoreCandidate(cand, {
+    query: "Kesariya",
+    expectedTitle: "Kesariya",
+    expectedArtist: "Pritam - Topic",
+    expectedDurationMs: 268000
+  });
+  assertEquals(scored.isRejected, false);
+  assertEquals(scored.score >= MIN_SCORE, true);
+});
+
+// Regression 6: Devanagari artist
+Deno.test("regression_6_devanagari_artist_accepted", () => {
+  const cand: CandidateTrack = {
+    id: "r6",
+    title: "Kesariya",
+    artist: "अरिजीत सिंह",
+    durationMs: 268000
+  };
+  const scored = scoreCandidate(cand, {
+    query: "Kesariya",
+    expectedTitle: "Kesariya",
+    expectedArtist: "अरिजीत सिंह",
+    expectedDurationMs: 268000
+  });
+  assertEquals(scored.isRejected, false);
+  assertEquals(scored.score >= MIN_SCORE, true);
+});
+
+// Regression 7: Candidate artist missing + exact title + duration delta <= 3s
+Deno.test("regression_7_missing_artist_exact_title_duration_accepted", () => {
+  const cand: CandidateTrack = {
+    id: "r7",
+    title: "Kesariya",
+    artist: null,
+    durationMs: 268000
+  };
+  const scored = scoreCandidate(cand, {
+    query: "Kesariya",
+    expectedTitle: "Kesariya",
+    expectedArtist: "Arijit Singh",
+    expectedDurationMs: 268000
+  });
+  assertEquals(scored.isRejected, false);
+  assertEquals(scored.score >= MIN_SCORE, true);
+});
+
+// Regression 8: "feat." in artist string
+Deno.test("regression_8_feat_in_artist_string_accepted", () => {
+  const cand: CandidateTrack = {
+    id: "r8",
+    title: "Baby",
+    artist: "Justin Bieber feat. Ludacris",
+    durationMs: 214000
+  };
+  const scored = scoreCandidate(cand, {
+    query: "Baby",
+    expectedTitle: "Baby",
+    expectedArtist: "Justin Bieber",
+    expectedDurationMs: 214000
+  });
+  assertEquals(scored.isRejected, false);
+  assertEquals(scored.score >= MIN_SCORE, true);
+});
+
+// Regression 9: DJ Khaled and DJ Snake not rejected as modifiers
+Deno.test("regression_9_dj_artist_names_accepted", () => {
+  const candKhaled: CandidateTrack = {
+    id: "r9a",
+    title: "Wild Thoughts",
+    artist: "DJ Khaled, Rihanna, Bryson Tiller",
+    durationMs: 204000
+  };
+  const scoredKhaled = scoreCandidate(candKhaled, {
+    query: "Wild Thoughts",
+    expectedTitle: "Wild Thoughts",
+    expectedArtist: "DJ Khaled",
+    expectedDurationMs: 204000
+  });
+  assertEquals(scoredKhaled.isRejected, false);
+
+  const candSnake: CandidateTrack = {
+    id: "r9b",
+    title: "Taki Taki",
+    artist: "DJ Snake, Selena Gomez, Ozuna, Cardi B",
+    durationMs: 212000
+  };
+  const scoredSnake = scoreCandidate(candSnake, {
+    query: "Taki Taki",
+    expectedTitle: "Taki Taki",
+    expectedArtist: "DJ Snake",
+    expectedDurationMs: 212000
+  });
+  assertEquals(scoredSnake.isRejected, false);
+});
+
+// Regression 10: Clean song "Kesariya" (Arijit Singh)
+Deno.test("regression_10_clean_song_kesariya_accepted", () => {
+  const cand: CandidateTrack = {
+    id: "r10",
+    title: "Kesariya",
+    artist: "Pritam, Arijit Singh, Amitabh Bhattacharya",
+    label: "Sony Music India",
+    durationMs: 268000
+  };
+  const scored = scoreCandidate(cand, {
+    query: "Kesariya",
+    expectedTitle: "Kesariya",
+    expectedArtist: "Arijit Singh",
+    expectedDurationMs: 268000
+  });
+  assertEquals(scored.isRejected, false);
+  assertEquals(scored.score >= MIN_SCORE, true);
+});
+
+// Regression 11: Clean song "Tum Hi Ho" (Arijit Singh)
+Deno.test("regression_11_clean_song_tum_hi_ho_accepted", () => {
+  const cand: CandidateTrack = {
+    id: "r11",
+    title: "Tum Hi Ho",
+    artist: "Mithoon, Arijit Singh",
+    label: "T-Series",
+    durationMs: 262000
+  };
+  const scored = scoreCandidate(cand, {
+    query: "Tum Hi Ho",
+    expectedTitle: "Tum Hi Ho",
+    expectedArtist: "Arijit Singh",
+    expectedDurationMs: 262000
+  });
+  assertEquals(scored.isRejected, false);
+  assertEquals(scored.score >= MIN_SCORE, true);
+});
+
+// Regression 12: Clean song "Agar Tum Saath Ho" (Alka Yagnik & Arijit Singh)
+Deno.test("regression_12_clean_song_agar_tum_saath_ho_accepted", () => {
+  const cand: CandidateTrack = {
+    id: "r12",
+    title: "Agar Tum Saath Ho",
+    artist: "Alka Yagnik, Arijit Singh",
+    label: "T-Series",
+    durationMs: 341000
+  };
+  const scored = scoreCandidate(cand, {
+    query: "Agar Tum Saath Ho",
+    expectedTitle: "Agar Tum Saath Ho",
+    expectedArtist: "Alka Yagnik & Arijit Singh",
+    expectedDurationMs: 341000
+  });
+  assertEquals(scored.isRejected, false);
+  assertEquals(scored.score >= MIN_SCORE, true);
+});
