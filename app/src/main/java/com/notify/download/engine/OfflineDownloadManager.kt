@@ -102,6 +102,15 @@ class OfflineDownloadManager(
             if (existingCompleted != null && storage.isFileValid(existingCompleted.relativeStorageKey)) {
                 Log.d(TAG, "Track $canonicalTrackId already downloaded: ${existingCompleted.relativeStorageKey}")
                 downloadDao.touchAccessTime(existingCompleted.downloadId)
+
+                // If user requested PINNED but existing download is SMART_OFFLINE, upgrade it immediately
+                if (bucket == DownloadBucket.PINNED && existingCompleted.bucket != "PINNED") {
+                    val newKey = storage.moveFileToBucket(existingCompleted.relativeStorageKey, DownloadBucket.PINNED)
+                        ?: existingCompleted.relativeStorageKey
+                    downloadDao.updateBucketAndKey(existingCompleted.downloadId, "PINNED", newKey)
+                    Log.i(TAG, "Upgraded download $canonicalTrackId from SMART_OFFLINE to PINNED (newKey=$newKey)")
+                }
+
                 val contentUri = storage.getContentUri(existingCompleted.relativeStorageKey).toString()
                 database.trackDao().markDownloaded(canonicalTrackId, contentUri)
                 if (canonicalTrackId != trackId) {
@@ -163,7 +172,7 @@ class OfflineDownloadManager(
         }
 
         if (shouldEnqueueWorker) {
-            enqueueChain(listOf(canonicalTrackId))
+            enqueueChain(listOf(canonicalTrackId), bucket = bucket)
         }
         return enqueued
     }
@@ -258,7 +267,7 @@ class OfflineDownloadManager(
 
         if (enqueuedTrackIds.isNotEmpty()) {
             Log.d(TAG, "Enqueuing serial chain of ${enqueuedTrackIds.size} tracks for playlist $playlistId")
-            enqueueChain(enqueuedTrackIds)
+            enqueueChain(enqueuedTrackIds, bucket = bucket)
         }
 
         return enqueuedTrackIds.size
@@ -306,7 +315,10 @@ class OfflineDownloadManager(
      * Uses firstRequest.then(secondRequest).then(thirdRequest).
      * Appends to the global UNIQUE_WORK_NAME chain.
      */
-    private fun enqueueChain(trackIds: List<String>) {
+    private fun enqueueChain(
+        trackIds: List<String>,
+        bucket: DownloadBucket = DownloadBucket.PINNED
+    ) {
         if (trackIds.isEmpty()) return
 
         val constraints = Constraints.Builder()
@@ -323,7 +335,12 @@ class OfflineDownloadManager(
                     15,
                     TimeUnit.SECONDS
                 )
-                .setInputData(workDataOf(TrackDownloadWorker.KEY_TRACK_ID to trackId))
+                .setInputData(
+                    workDataOf(
+                        TrackDownloadWorker.KEY_TRACK_ID to trackId,
+                        TrackDownloadWorker.KEY_BUCKET to bucket.name
+                    )
+                )
                 .addTag(TrackDownloadWorker.TAG)
                 .addTag("track_$trackId")
                 .build()

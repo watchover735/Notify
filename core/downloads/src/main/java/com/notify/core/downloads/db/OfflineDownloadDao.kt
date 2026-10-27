@@ -130,6 +130,9 @@ interface OfflineDownloadDao {
     @Query("UPDATE offline_downloads SET bucket = :bucket, updatedAtEpochMs = :updatedAt WHERE downloadId = :downloadId")
     suspend fun updateBucket(downloadId: String, bucket: String, updatedAt: Long = System.currentTimeMillis())
 
+    @Query("UPDATE offline_downloads SET bucket = :bucket, relativeStorageKey = :relativeKey, updatedAtEpochMs = :updatedAt WHERE downloadId = :downloadId")
+    suspend fun updateBucketAndKey(downloadId: String, bucket: String, relativeKey: String, updatedAt: Long = System.currentTimeMillis())
+
     // ── Bulk queries ─────────────────────────────────────────────────────────
 
     @Query("SELECT * FROM offline_downloads WHERE status = 'COMPLETED' ORDER BY updatedAtEpochMs DESC, downloadId ASC")

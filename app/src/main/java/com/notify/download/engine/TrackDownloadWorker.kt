@@ -76,6 +76,7 @@ class TrackDownloadWorker(
     companion object {
         const val TAG = "TrackDownloadWorker"
         const val KEY_TRACK_ID = "track_id"
+        const val KEY_BUCKET = "bucket"
         const val UNIQUE_WORK_NAME = OfflineDownloadManager.UNIQUE_WORK_NAME
 
         /** Global concurrency limiter: maximum 1 active audio download at any time. */
@@ -182,6 +183,15 @@ class TrackDownloadWorker(
         val trackId = queueItem.trackId
         Log.d(TAG, "Claimed track $trackId for download (attempt ${queueItem.attemptCount + 1})")
 
+        val requestedBucketStr = inputData.getString(KEY_BUCKET)
+            ?: downloadDao.getLatestForTrack(trackId)?.bucket
+            ?: "PINNED"
+        val requestedBucket = try {
+            DownloadBucket.valueOf(requestedBucketStr)
+        } catch (_: Exception) {
+            DownloadBucket.PINNED
+        }
+
         // Check if queue is paused
         if (queueDao.getPausedCount() > 0 && queueItem.status == DownloadQueueStatus.PAUSED) {
             Log.d(TAG, "Queue is paused; halting work for $trackId")
@@ -192,6 +202,12 @@ class TrackDownloadWorker(
         val existingCompleted = downloadDao.getCompletedForTrack(trackId)
         if (existingCompleted != null && storage.isFileValid(existingCompleted.relativeStorageKey)) {
             Log.d(TAG, "Track $trackId already has valid file on disk; marking COMPLETED")
+            if (requestedBucket == DownloadBucket.PINNED && existingCompleted.bucket != "PINNED") {
+                val newKey = storage.moveFileToBucket(existingCompleted.relativeStorageKey, DownloadBucket.PINNED)
+                    ?: existingCompleted.relativeStorageKey
+                downloadDao.updateBucketAndKey(existingCompleted.downloadId, "PINNED", newKey)
+                Log.i(TAG, "Upgraded download $trackId from SMART_OFFLINE to PINNED (newKey=$newKey)")
+            }
             queueDao.markCompleted(trackId)
             downloadDao.touchAccessTime(existingCompleted.downloadId)
             return@withContext Result.success()
@@ -238,25 +254,39 @@ class TrackDownloadWorker(
 
         // Ensure offline_downloads entity exists
         val relativeKey = OfflineStorage.buildRelativeKey(
-            bucket = DownloadBucket.PINNED,
+            bucket = requestedBucket,
             provider = source.provider,
             sourceId = source.sourceId
         )
-        val downloadEntity = OfflineDownloadEntity(
-            downloadId = UUID.randomUUID().toString(),
-            trackId = trackId,
-            provider = source.provider,
-            providerSourceId = source.sourceId,
-            canonicalUrl = source.canonicalUrl,
-            relativeStorageKey = relativeKey,
-            bucket = "PINNED",
-            status = OfflineDownloadStatus.DOWNLOADING,
-            qualityProfile = preferences.audioQualityProfile.name,
-            durationMs = if (queueItem.durationMs > 0) queueItem.durationMs else null,
-            createdAtEpochMs = now,
-            updatedAtEpochMs = now,
-            lastAccessedAtEpochMs = now
-        )
+        val existingRow = downloadDao.getActiveForTrack(trackId)
+            ?: downloadDao.getLatestForTrack(trackId)
+        val downloadEntity = if (existingRow != null) {
+            existingRow.copy(
+                provider = source.provider,
+                providerSourceId = source.sourceId,
+                canonicalUrl = source.canonicalUrl,
+                relativeStorageKey = relativeKey,
+                bucket = requestedBucket.name,
+                status = OfflineDownloadStatus.DOWNLOADING,
+                updatedAtEpochMs = now
+            )
+        } else {
+            OfflineDownloadEntity(
+                downloadId = UUID.randomUUID().toString(),
+                trackId = trackId,
+                provider = source.provider,
+                providerSourceId = source.sourceId,
+                canonicalUrl = source.canonicalUrl,
+                relativeStorageKey = relativeKey,
+                bucket = requestedBucket.name,
+                status = OfflineDownloadStatus.DOWNLOADING,
+                qualityProfile = preferences.audioQualityProfile.name,
+                durationMs = if (queueItem.durationMs > 0) queueItem.durationMs else null,
+                createdAtEpochMs = now,
+                updatedAtEpochMs = now,
+                lastAccessedAtEpochMs = now
+            )
+        }
         val insertRes = downloadDao.insertIgnore(downloadEntity)
         if (insertRes == -1L) {
             downloadDao.upsert(downloadEntity)
