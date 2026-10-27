@@ -69,6 +69,13 @@ interface OfflineDownloadDao {
 
     @Query("""
         SELECT COUNT(*) > 0 FROM offline_downloads 
+        WHERE (trackId = :trackId OR trackId = :sourceId OR providerSourceId = :sourceId) 
+          AND status IN ('PENDING', 'RESOLVING', 'DOWNLOADING', 'VALIDATING', 'COMPLETED')
+    """)
+    suspend fun hasActiveOrCompletedDownload(trackId: String, sourceId: String): Boolean
+
+    @Query("""
+        SELECT COUNT(*) > 0 FROM offline_downloads 
         WHERE (
             trackId = :trackId 
             OR (
@@ -144,6 +151,12 @@ interface OfflineDownloadDao {
     /** Observe downloads in FAILED status for UI error indicators. */
     @Query("SELECT * FROM offline_downloads WHERE status = 'FAILED' ORDER BY updatedAtEpochMs DESC")
     fun observeFailedDownloads(): Flow<List<OfflineDownloadEntity>>
+
+    // DEBUG-TEMP START
+    /** Temporary debug query to inspect the 20 most recent download entries. */
+    @Query("SELECT * FROM offline_downloads ORDER BY updatedAtEpochMs DESC LIMIT :limit")
+    suspend fun getRecentDownloads(limit: Int = 20): List<OfflineDownloadEntity>
+    // DEBUG-TEMP END
 
     @Query("SELECT * FROM offline_downloads WHERE status = 'PENDING' ORDER BY createdAtEpochMs ASC LIMIT 1")
     suspend fun getNextPending(): OfflineDownloadEntity?

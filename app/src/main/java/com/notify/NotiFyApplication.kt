@@ -45,6 +45,26 @@ class NotiFyApplication : Application(), ImageLoaderFactory {
             try {
                 delay(3000L) // Wait until UI startup completes
                 val db = com.notify.download.db.NotiFyDatabase.getInstance(this@NotiFyApplication)
+
+                // DEBUG-TEMP START
+                // [TEMPORARY DEBUG DUMP: Diagnosis B.6] Log the 20 most recent offline_downloads rows
+                try {
+                    val storage = com.notify.core.downloads.storage.OfflineStorage(this@NotiFyApplication)
+                    val recentRows = db.offlineDownloadDao().getRecentDownloads(20)
+                    android.util.Log.i("OfflineDebugDump", "=== DUMP: 20 MOST RECENT OFFLINE_DOWNLOADS ROWS (total found: ${recentRows.size}) ===")
+                    for (row in recentRows) {
+                        val file = storage.resolveFile(row.relativeStorageKey)
+                        android.util.Log.i(
+                            "OfflineDebugDump",
+                            "trackId=${row.trackId} | sourceId=${row.providerSourceId} | bucket=${row.bucket} | status=${row.status} | path=${row.relativeStorageKey} | fileExists=${file.exists()} | sizeBytes=${file.length()} (dbSize=${row.fileSizeBytes}) | error=${row.errorMessage} | updatedEpochMs=${row.updatedAtEpochMs}"
+                        )
+                    }
+                    android.util.Log.i("OfflineDebugDump", "=== END OFFLINE_DOWNLOADS DUMP ===")
+                } catch (e: Exception) {
+                    android.util.Log.w("OfflineDebugDump", "Failed to dump offline_downloads: ${e.message}")
+                }
+                // DEBUG-TEMP END
+
                 val completed = db.offlineDownloadDao().getCompletedDownloads()
 
                 // Pre-populate in-memory mapping in LocalArtworkStore (zero file I/O)

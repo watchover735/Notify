@@ -67,6 +67,9 @@ interface TrackDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertSource(source: TrackSourceEntity)
 
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertSourceIgnore(source: TrackSourceEntity): Long
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertSources(sources: List<TrackSourceEntity>)
 
@@ -186,7 +189,7 @@ interface TrackDao {
     """)
     suspend fun resetStaleInProgressTracks(now: Long, staleCutoffMs: Long): Int
 
-    @Query("SELECT * FROM tracks")
+    @Query("SELECT * FROM tracks WHERE id IN (SELECT trackId FROM playlist_entries)")
     fun observeAllTracks(): kotlinx.coroutines.flow.Flow<List<TrackEntity>>
 
     @Query("SELECT * FROM tracks")

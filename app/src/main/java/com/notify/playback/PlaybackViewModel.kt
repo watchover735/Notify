@@ -7,11 +7,16 @@ import androidx.lifecycle.viewModelScope
 import com.notify.core.model.AudioSource
 import com.notify.core.model.DownloadBucket
 import com.notify.core.model.PlaybackOrigin
+import com.notify.core.model.ProviderId
 import com.notify.core.model.Track
 import com.notify.core.model.TrackId
 import com.notify.core.downloads.storage.DownloadPreferences
+import com.notify.download.db.DownloadState
 import com.notify.download.db.NotiFyDatabase
 import com.notify.download.db.PlaylistRepository
+import com.notify.download.db.ResolutionState
+import com.notify.download.db.TrackEntity
+import com.notify.download.db.TrackSourceEntity
 import com.notify.download.engine.OfflineDownloadManager
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -367,6 +372,9 @@ class PlaybackViewModel(
                     && state.currentPositionMs >= downloadPreferences.autoSaveThresholdMs
                     && currentTrackIdStr != autoSaveTriggeredTrackId
                 ) {
+                    // DEBUG-TEMP START
+                    Log.i("OfflineDebugAutoSave", "Triggering auto-save: track=${currentTrack.title} (id=$currentTrackIdStr, pos=${state.currentPositionMs}ms, threshold=${downloadPreferences.autoSaveThresholdMs}ms)")
+                    // DEBUG-TEMP END
                     // Trigger auto-save for this track
                     autoSaveTriggeredTrackId = currentTrackIdStr
                     tryAutoSave(currentTrack)
@@ -380,24 +388,111 @@ class PlaybackViewModel(
     }
 
     private fun tryAutoSave(track: Track) {
-        if (!downloadPreferences.autoSaveEnabled) return
+        if (!downloadPreferences.autoSaveEnabled) {
+            Log.w(TAG, "Auto-save skipped for '${track.title}': autoSaveEnabled is false")
+            return
+        }
+
+        val rawId = track.id.rawId.trim()
+        if (rawId.isBlank()) {
+            Log.w(TAG, "Auto-save skipped for '${track.title}': rawId is blank")
+            return
+        }
+
+        if (track.source is AudioSource.Local || track.id.provider == ProviderId.LOCAL) {
+            Log.w(TAG, "Auto-save skipped for '${track.title}': track is local audio")
+            return
+        }
 
         viewModelScope.launch {
             try {
-                val trackIdStr = track.id.toString()
-                val isAlready = downloadManager.isTrackAvailableOffline(trackIdStr)
-                if (isAlready) return@launch
+                val providerName = when (track.id.provider) {
+                    ProviderId.YOUTUBE -> "YOUTUBE"
+                    ProviderId.SPOTIFY -> "SPOTIFY"
+                    else -> "CUSTOM_RESOLVER"
+                }
+                val canonicalTrackId = if (providerName == "YOUTUBE" && !rawId.startsWith("youtube:")) {
+                    "youtube:$rawId"
+                } else {
+                    track.id.toString()
+                }
 
-                // Find the track entity and source
-                val trackEntity = database.trackDao().getTrackById(trackIdStr)
-                val source = database.trackDao().getSelectedSource(trackIdStr)
-                if (trackEntity != null && source != null) {
-                    downloadManager.enqueueDownload(trackEntity, source, DownloadBucket.SMART_OFFLINE)
-                    Log.d(TAG, "Auto-save triggered for: ${track.title} (${track.id})")
+                // Deduplicate by both catalog id and providerSourceId: skip if already active or completed
+                val isAlready = database.offlineDownloadDao().hasActiveOrCompletedDownload(canonicalTrackId, rawId)
+                    || downloadManager.isTrackAvailableOffline(canonicalTrackId)
+                    || downloadManager.isTrackAvailableOffline(rawId)
+
+                if (isAlready) {
+                    Log.w(TAG, "Auto-save skipped for '${track.title}': download already active or completed (trackId=$canonicalTrackId, rawId=$rawId)")
+                    return@launch
+                }
+
+                // Lookup existing TrackEntity and TrackSourceEntity
+                var trackEntity = database.trackDao().getTrackById(canonicalTrackId)
+                    ?: database.trackDao().getTrackById(rawId)
+                var source = database.trackDao().getSelectedSource(canonicalTrackId)
+                    ?: database.trackDao().getSelectedSource(rawId)
+
+                // If missing (search / history / trending), synthesize from playing Track metadata
+                if (trackEntity == null) {
+                    val now = System.currentTimeMillis()
+                    val newTrack = TrackEntity(
+                        id = canonicalTrackId,
+                        title = track.title,
+                        artist = track.artist,
+                        album = track.album,
+                        durationMs = track.durationMs,
+                        artworkUri = track.artworkUri,
+                        artworkUrl = track.artworkUri,
+                        spotifyId = if (canonicalTrackId.startsWith("spotify:")) rawId else null,
+                        resolutionState = ResolutionState.MATCHED,
+                        downloadState = DownloadState.NOT_DOWNLOADED,
+                        localContentUri = null,
+                        dateAddedEpochMs = now
+                    )
+                    // Insert with IGNORE: never overwrites or triggers CASCADE delete on playlist_entries
+                    database.trackDao().insertTracksIgnore(listOf(newTrack))
+                    trackEntity = database.trackDao().getTrackById(canonicalTrackId) ?: newTrack
+                }
+
+                val effectiveTrack = trackEntity ?: run {
+                    Log.w(TAG, "Auto-save skipped for '${track.title}': failed to resolve or synthesize track entity")
+                    return@launch
+                }
+
+                if (source == null) {
+                    val canonicalUrl = when (providerName) {
+                        "YOUTUBE" -> "https://www.youtube.com/watch?v=$rawId"
+                        else -> (track.source as? AudioSource.Remote)?.sourceId ?: rawId
+                    }
+                    val newSource = TrackSourceEntity(
+                        sourceKey = "$canonicalTrackId:${providerName.lowercase()}:$rawId",
+                        trackId = effectiveTrack.id,
+                        provider = providerName,
+                        sourceId = rawId,
+                        canonicalUrl = canonicalUrl,
+                        confidence = 1.0f,
+                        durationDeltaMs = 0L,
+                        artworkUrl = track.artworkUri,
+                        selected = true
+                    )
+                    // Insert with IGNORE: never overwrites or triggers CASCADE delete on playlist_entries
+                    database.trackDao().insertSourceIgnore(newSource)
+                    source = database.trackDao().getSelectedSource(effectiveTrack.id) ?: newSource
+                }
+
+                val enqueued = downloadManager.enqueueTrackDownload(
+                    trackId = effectiveTrack.id,
+                    bucket = DownloadBucket.SMART_OFFLINE
+                )
+                if (enqueued) {
+                    Log.i(TAG, "Auto-save successfully enqueued for '${track.title}' (trackId=${effectiveTrack.id}, bucket=SMART_OFFLINE)")
+                } else {
+                    Log.w(TAG, "Auto-save skipped for '${track.title}': enqueueTrackDownload returned false")
                 }
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
-                Log.w(TAG, "Auto-save failed for ${track.title}: ${e.message}")
+                Log.w(TAG, "Auto-save failed for '${track.title}': ${e.message}", e)
             }
         }
     }
