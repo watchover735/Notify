@@ -131,7 +131,7 @@ class PlaylistLibraryViewModel(
                         artist = track?.artist ?: "Unknown Artist",
                         album = track?.album,
                         durationMs = dl.durationMs ?: track?.durationMs ?: 0L,
-                        artworkUri = com.notify.core.playback.LocalArtworkStore.getArtworkUri(dl.trackId, getApplication())?.toString()
+                        artworkUri = com.notify.core.playback.LocalArtworkStore.getArtworkUri(dl.trackId, dl.providerSourceId, getApplication())?.toString()
                             ?: (track?.artworkUrl ?: track?.artworkUri),
                         fileSizeBytes = dl.fileSizeBytes ?: 0L,
                         bucket = if (dl.bucket == "PINNED") DownloadBucket.PINNED else DownloadBucket.SMART_OFFLINE,

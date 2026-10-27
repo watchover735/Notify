@@ -30,6 +30,30 @@ object LocalArtworkStore {
     private val downloadScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val inFlightDownloads = ConcurrentHashMap.newKeySet<String>()
 
+    // In-memory cache for resolved artwork files to prevent disk scan per frame.
+    // Negative lookups are cached as NO_FILE sentinel.
+    private val NO_FILE = File("")
+    private val resolvedFileCache = ConcurrentHashMap<String, File>()
+    private val trackToSourceMap = ConcurrentHashMap<String, String>()
+
+    @Volatile
+    private var sourceIdResolver: ((String) -> String?)? = null
+
+    fun setSourceIdResolver(resolver: (String) -> String?) {
+        sourceIdResolver = resolver
+    }
+
+    fun mapTrackToSource(trackId: String, sourceId: String) {
+        trackToSourceMap[trackId] = sourceId
+        if (resolvedFileCache[trackId] == NO_FILE) {
+            resolvedFileCache.remove(trackId)
+        }
+    }
+
+    fun clearLookupCache() {
+        resolvedFileCache.clear()
+    }
+
     @Volatile
     private var appContext: Context? = null
 
@@ -53,26 +77,46 @@ object LocalArtworkStore {
     }
 
     fun getArtworkFile(trackId: String, context: Context? = appContext): File? {
+        val cached = resolvedFileCache[trackId]
+        if (cached != null) {
+            return if (cached === NO_FILE || !cached.exists()) null else cached
+        }
+
         val dir = getArtworkDirectory(context) ?: return null
+        val found = resolveArtworkFileInternal(trackId, dir)
+        resolvedFileCache[trackId] = found ?: NO_FILE
+        return found
+    }
+
+    private fun resolveArtworkFileInternal(trackId: String, dir: File): File? {
+        // 1. Exact match on trackId (e.g. "rYEDA3JcQqw.jpg" or "spotify_xxx.jpg")
         val exact = File(dir, "${sanitizeKey(trackId)}.jpg")
         if (exact.exists() && exact.length() > 0L) return exact
 
-        // Check if trackId has prefix (e.g. "youtube:123" -> check "123.jpg")
+        // 2. Fallback via mapped sourceId (e.g. trackId -> YouTube video ID)
+        val mappedSourceId = trackToSourceMap[trackId] ?: sourceIdResolver?.invoke(trackId)
+        if (!mappedSourceId.isNullOrBlank()) {
+            val sourceFile = File(dir, "${sanitizeKey(mappedSourceId)}.jpg")
+            if (sourceFile.exists() && sourceFile.length() > 0L) return sourceFile
+        }
+
+        // 3. Check prefix/suffix variants (e.g. "youtube:123" -> check "123.jpg")
         if (trackId.contains(":") || trackId.contains("_")) {
             val raw = trackId.substringAfterLast(":")
             val f = File(dir, "${sanitizeKey(raw)}.jpg")
             if (f.exists() && f.length() > 0L) return f
+
+            val beforeUnderscore = trackId.substringBefore("_")
+            val f2 = File(dir, "${sanitizeKey(beforeUnderscore)}.jpg")
+            if (f2.exists() && f2.length() > 0L) return f2
         }
 
-        // Check if directory has any file ending with _${sanitizedKey}.jpg (e.g. "youtube_123.jpg" for "123")
+        // 4. Targeted prefix check: "youtube_${sanitizedKey}.jpg" without scanning directory
         val sanitized = sanitizeKey(trackId)
-        val matches = dir.listFiles { _, name -> name.endsWith("_$sanitized.jpg") }
-        if (!matches.isNullOrEmpty()) {
-            val candidate = matches.firstOrNull { it.length() > 0L }
-            if (candidate != null) return candidate
-        }
+        val prefixed = File(dir, "youtube_${sanitized}.jpg")
+        if (prefixed.exists() && prefixed.length() > 0L) return prefixed
 
-        return exact
+        return null
     }
 
     fun hasArtwork(trackId: String, context: Context? = appContext): Boolean {
@@ -87,6 +131,16 @@ object LocalArtworkStore {
         } else {
             null
         }
+    }
+
+    fun getArtworkUri(trackId: String, fallbackSourceId: String?, context: Context? = appContext): Uri? {
+        val uri = getArtworkUri(trackId, context)
+        if (uri != null) return uri
+        if (!fallbackSourceId.isNullOrBlank()) {
+            mapTrackToSource(trackId, fallbackSourceId)
+            return getArtworkUri(fallbackSourceId, context)
+        }
+        return null
     }
 
     fun downloadAndCacheArtworkAsync(

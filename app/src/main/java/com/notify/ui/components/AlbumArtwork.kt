@@ -60,17 +60,39 @@ fun AlbumArtwork(
     val rawUri = artworkUri ?: track?.artworkUri
     val context = LocalContext.current
     val effectiveTrackId = trackId ?: track?.id?.rawId
-    val localCachedUri = remember(effectiveTrackId, rawUri) {
+    val sourceId = (track?.source as? AudioSource.Remote)?.sourceId
+        ?: (track?.id?.takeIf { it.provider == com.notify.core.model.ProviderId.YOUTUBE }?.rawId)
+
+    val localCachedUri = remember(effectiveTrackId, sourceId, rawUri) {
         val id = effectiveTrackId ?: if (rawUri != null && !rawUri.startsWith("http")) rawUri else null
         if (id != null) {
-            com.notify.core.playback.LocalArtworkStore.getArtworkUri(id, context)?.toString()
+            com.notify.core.playback.LocalArtworkStore.getArtworkUri(id, sourceId, context)?.toString()
+        } else if (sourceId != null) {
+            com.notify.core.playback.LocalArtworkStore.getArtworkUri(sourceId, context)?.toString()
         } else null
     }
-    // For large display contexts (NowPlaying / >= 512 px), prefer the remote URL so
-    // ArtworkResolution can upgrade it to the highest-resolution variant (maxresdefault, etc.).
-    // Small contexts (MiniPlayer, list rows) keep using the local cache for speed.
-    val preferRemote = targetSizePx >= 512 && rawUri?.startsWith("http") == true
-    val effectiveUri = if (preferRemote) rawUri else (localCachedUri ?: rawUri)
+
+    // Candidate resolution chain:
+    // 1. Try local file first when it exists (instant load, offline resilience)
+    // 2. Else remote (sharp high-res candidates for Now Playing, e.g. 1080p maxresdefault)
+    // 3. If remote errors, fall back to local before placeholder
+    // 4. Streamed/online songs with no local file behave exactly as today
+    val candidates = remember(localCachedUri, rawUri, targetSizePx) {
+        val remoteList = if (rawUri?.startsWith("http") == true) {
+            ArtworkResolution.highResArtworkCandidates(rawUri, targetSizePx)
+        } else if (!rawUri.isNullOrBlank()) {
+            listOf(rawUri)
+        } else {
+            emptyList()
+        }
+
+        if (localCachedUri != null) {
+            listOf(localCachedUri) + remoteList
+        } else {
+            remoteList
+        }
+    }
+
     val isRemote = track?.source is AudioSource.Remote && localCachedUri == null
 
     Box(
@@ -80,12 +102,9 @@ fun AlbumArtwork(
             .border(1.dp, DarkSurfaceBorder, shape),
         contentAlignment = Alignment.Center
     ) {
-        if (!effectiveUri.isNullOrBlank()) {
-            val candidates = remember(effectiveUri, targetSizePx) {
-                ArtworkResolution.highResArtworkCandidates(effectiveUri, targetSizePx)
-            }
+        if (candidates.isNotEmpty()) {
             var candidateIndex by remember(candidates) { mutableStateOf(0) }
-            val currentUrl = candidates.getOrNull(candidateIndex) ?: effectiveUri
+            val currentUrl = candidates.getOrNull(candidateIndex) ?: candidates.first()
 
             val context = LocalContext.current
             val imageRequest = remember(currentUrl, targetSizePx) {
@@ -115,6 +134,15 @@ fun AlbumArtwork(
                         // Resilient fallback: Try next candidate in resolution chain (e.g. maxres -> sd -> hq)
                         DisposableEffect(candidateIndex) {
                             candidateIndex++
+                            onDispose {}
+                        }
+                    } else if (localCachedUri != null && currentUrl != localCachedUri) {
+                        // If remote exhausted and local file is available, fall back to local before placeholder
+                        DisposableEffect(currentUrl) {
+                            val localIdx = candidates.indexOf(localCachedUri)
+                            if (localIdx >= 0) {
+                                candidateIndex = localIdx
+                            }
                             onDispose {}
                         }
                     } else {

@@ -240,7 +240,13 @@ fun NowPlayingScreen(
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = track?.let { "${it.artist} • ${it.album ?: "Unknown"}" } ?: "Select a song to start",
+                        text = track?.let {
+                            if (it.album.isNullOrBlank() || it.album.equals("Unknown", ignoreCase = true)) {
+                                it.artist
+                            } else {
+                                "${it.artist} • ${it.album}"
+                            }
+                        } ?: "Select a song to start",
                         color = TextSecondary,
                         fontSize = 15.sp,
                         maxLines = 1,
