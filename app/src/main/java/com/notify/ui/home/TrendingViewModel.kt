@@ -179,9 +179,10 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     val downloadedTracks: StateFlow<List<DownloadedTrackItem>> =
         downloadManager.observeCompletedDownloads()
             .map { completedList ->
-                val trackIds = completedList.map { it.trackId }.distinct()
+                val pinnedList = completedList.filter { it.bucket == "PINNED" }
+                val trackIds = pinnedList.map { it.trackId }.distinct()
                 val trackMap = database.trackDao().getTracksByIds(trackIds).associateBy { it.id }
-                completedList.mapNotNull { dl ->
+                pinnedList.mapNotNull { dl ->
                     val track = trackMap[dl.trackId]
                     val contentUri = downloadManager.getOfflinePlaybackUri(dl.trackId) ?: return@mapNotNull null
                     DownloadedTrackItem(

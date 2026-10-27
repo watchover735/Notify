@@ -526,7 +526,7 @@ fun LibraryScreen(
                         EmptyState(
                             icon = Icons.Default.FileDownload,
                             title = if (searchQuery.isBlank()) "No Offline Downloads" else "No Downloads Found",
-                            description = if (searchQuery.isBlank()) "Songs you download or listen to for more than 30 seconds are saved here." else "No offline tracks match \"$searchQuery\"."
+                            description = if (searchQuery.isBlank()) "Songs you download will appear here." else "No offline tracks match \"$searchQuery\"."
                         )
                     }
                 } else {

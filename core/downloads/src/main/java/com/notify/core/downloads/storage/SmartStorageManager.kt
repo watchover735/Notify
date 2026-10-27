@@ -53,7 +53,10 @@ class SmartStorageManager(
      * @param requiredFreeBytes additional space needed for a pending download
      * @return number of entries evicted
      */
-    suspend fun evictIfOverBudget(requiredFreeBytes: Long = 0L): Int {
+    suspend fun evictIfOverBudget(
+        requiredFreeBytes: Long = 0L,
+        excludeTrackIds: Set<String> = emptySet()
+    ): Int {
         val budget = preferences.smartBudgetBytes
         val currentSmartSize = offlineStorage.smartSizeBytes()
         val overage = (currentSmartSize + requiredFreeBytes) - budget
@@ -71,6 +74,11 @@ class SmartStorageManager(
 
         for (entry in smartEntries) {
             if (freedBytes >= overage) break
+
+            if (excludeTrackIds.contains(entry.trackId) || excludeTrackIds.contains(entry.providerSourceId)) {
+                Log.d(TAG, "Skipping eviction for active/playing track: ${entry.trackId}")
+                continue
+            }
 
             val fileSize = entry.fileSizeBytes ?: 0L
             offlineStorage.deleteFile(entry.relativeStorageKey)

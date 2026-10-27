@@ -118,9 +118,11 @@ class PlaylistLibraryViewModel(
         downloadManager.observeCompletedDownloads()
             .distinctUntilChanged()
             .onEach { completedList ->
-                val trackIds = completedList.map { it.trackId }.distinct()
+                // Downloads tab shows ONLY user-chosen PINNED downloads
+                val pinnedList = completedList.filter { it.bucket == "PINNED" }
+                val trackIds = pinnedList.map { it.trackId }.distinct()
                 val trackMap = database.trackDao().getTracksByIds(trackIds).associateBy { it.id }
-                val items = completedList.mapNotNull { dl ->
+                val items = pinnedList.mapNotNull { dl ->
                     if (!downloadManager.isFileValid(dl.relativeStorageKey)) return@mapNotNull null
                     val track = trackMap[dl.trackId]
                     val contentUri = downloadManager.getContentUri(dl.relativeStorageKey) ?: return@mapNotNull null
@@ -134,7 +136,7 @@ class PlaylistLibraryViewModel(
                         artworkUri = com.notify.core.playback.LocalArtworkStore.getArtworkUri(dl.trackId, dl.providerSourceId, getApplication())?.toString()
                             ?: (track?.artworkUrl ?: track?.artworkUri),
                         fileSizeBytes = dl.fileSizeBytes ?: 0L,
-                        bucket = if (dl.bucket == "PINNED") DownloadBucket.PINNED else DownloadBucket.SMART_OFFLINE,
+                        bucket = DownloadBucket.PINNED,
                         qualityProfile = dl.qualityProfile,
                         downloadedAtEpochMs = dl.updatedAtEpochMs,
                         contentUriString = contentUri.toString()

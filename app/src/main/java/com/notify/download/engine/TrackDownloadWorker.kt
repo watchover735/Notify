@@ -225,7 +225,10 @@ class TrackDownloadWorker(
 
         // ── 4. Check storage budget ────────────────────────────────────────
         if (!storageManager.canDownload(estimatedSizeBytes = 20_000_000L)) {
-            val evicted = storageManager.evictIfOverBudget(requiredFreeBytes = 20_000_000L)
+            val evicted = storageManager.evictIfOverBudget(
+                requiredFreeBytes = 20_000_000L,
+                excludeTrackIds = setOf(trackId)
+            )
             if (evicted == 0 || !storageManager.canDownload(20_000_000L)) {
                 val errorMsg = "Insufficient storage"
                 Log.w(TAG, "Insufficient storage for $trackId")
