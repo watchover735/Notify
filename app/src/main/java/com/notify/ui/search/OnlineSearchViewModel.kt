@@ -796,9 +796,11 @@ class OnlineSearchViewModel(
             StartupMetricsLogger.onPlayTap(requestId, candidate.videoId, sessionId = 0L)
             StartupMetricsLogger.onResolveStart(requestId, candidate.videoId, provider = "youtube")
             try {
-                // Priority 1: Check if already available in NotiFy offline downloads
+                // Priority 1: Check if already available in NotiFy offline downloads via shared helper
                 val downloadManager = com.notify.download.engine.OfflineDownloadManager(getApplication())
-                val offlineUri = downloadManager.getOfflinePlaybackUriForSource(candidate.videoId)
+                val offlineUri = downloadManager.resolveOfflineUri(
+                    providerSourceId = candidate.videoId
+                )
                 if (offlineUri != null) {
                     logD("Candidate ${candidate.videoId} available offline, playing locally: $offlineUri")
                     StartupMetricsLogger.onResolveComplete(requestId)
@@ -812,6 +814,13 @@ class OnlineSearchViewModel(
                         source = AudioSource.Local(offlineUri.toString())
                     )
                     onPlayStream(domainTrack, offlineUri.toString(), PlaybackOrigin.USER_SEARCH_SELECTION)
+                    return@launch
+                }
+
+                if (!downloadManager.isNetworkConnected()) {
+                    logW("Offline and no local file for candidate: ${candidate.videoId}")
+                    SnackbarManager.emit(SnackbarEvent.Message("Not available offline"))
+                    _uiState.value = OnlineSearchUiState.Error("Not available offline")
                     return@launch
                 }
 
@@ -888,9 +897,12 @@ class OnlineSearchViewModel(
             StartupMetricsLogger.onPlayTap(requestId, item.providerSourceId, sessionId = 0L)
             StartupMetricsLogger.onResolveStart(requestId, item.providerSourceId, provider = item.provider)
             try {
-                // Priority 1: Check offline availability
+                // Priority 1: Check offline availability via shared helper
                 val downloadManager = com.notify.download.engine.OfflineDownloadManager(getApplication())
-                val offlineUri = downloadManager.getOfflinePlaybackUriForSource(item.providerSourceId)
+                val offlineUri = downloadManager.resolveOfflineUri(
+                    trackId = item.id,
+                    providerSourceId = item.providerSourceId
+                )
                 if (offlineUri != null) {
                     StartupMetricsLogger.onResolveComplete(requestId)
                     val providerId = when (item.provider.trim().lowercase()) {
@@ -908,6 +920,13 @@ class OnlineSearchViewModel(
                         source = AudioSource.Local(offlineUri.toString())
                     )
                     onPlayStream(domainTrack, offlineUri.toString(), PlaybackOrigin.SEARCH_HISTORY_SELECTION)
+                    return@launch
+                }
+
+                if (!downloadManager.isNetworkConnected()) {
+                    logW("Offline and no local file for recent item: ${item.providerSourceId}")
+                    SnackbarManager.emit(SnackbarEvent.Message("Not available offline"))
+                    _uiState.value = OnlineSearchUiState.Error("Not available offline")
                     return@launch
                 }
 

@@ -1639,10 +1639,12 @@ class PlaybackQueueCoordinator(
         val track = entry.track
         val queueEntryId = entry.queueId
 
-        // Priority 1: Valid NotiFy Offline Download
-        val completedDownload = downloadManager.getCompletedDownloadForTrack(track.id.rawId)
-        val offlineUri = downloadManager.getOfflinePlaybackUri(track.id.rawId)
-            ?: downloadManager.getOfflinePlaybackUriForSource(track.id.rawId)
+        // Priority 1: Valid NotiFy Offline Download via shared helper
+        val remoteSourceId = (track.source as? AudioSource.Remote)?.sourceId
+        val offlineUri = downloadManager.resolveOfflineUri(
+            trackId = track.id.rawId,
+            providerSourceId = remoteSourceId
+        )
 
         if (offlineUri != null) {
             Log.d(TAG, "Priority 1 hit: Offline file found for ${track.title} -> $offlineUri")
@@ -1818,8 +1820,11 @@ class PlaybackQueueCoordinator(
 
     private suspend fun isEntryAvailableOffline(entry: QueueEntry): Boolean {
         if (entry.track.source is AudioSource.Local) return true
-        val offlineUri = downloadManager.getOfflinePlaybackUri(entry.track.id.rawId)
-            ?: downloadManager.getOfflinePlaybackUriForSource(entry.track.id.rawId)
+        val remoteSourceId = (entry.track.source as? AudioSource.Remote)?.sourceId
+        val offlineUri = downloadManager.resolveOfflineUri(
+            trackId = entry.track.id.rawId,
+            providerSourceId = remoteSourceId
+        )
         return offlineUri != null
     }
 
@@ -1922,8 +1927,11 @@ class PlaybackQueueCoordinator(
 
         // Attempt pre-resolution of target item (offline or local)
         val resolvedTargetItem = if (targetEntry != null) {
-            val offlineUri = downloadManager.getOfflinePlaybackUri(targetEntry.track.id.rawId)
-                ?: downloadManager.getOfflinePlaybackUriForSource(targetEntry.track.id.rawId)
+            val remoteSourceId = (targetEntry.track.source as? AudioSource.Remote)?.sourceId
+            val offlineUri = downloadManager.resolveOfflineUri(
+                trackId = targetEntry.track.id.rawId,
+                providerSourceId = remoteSourceId
+            )
 
             if (offlineUri != null) {
                 val offlineTrack = targetEntry.track.copy(source = AudioSource.Local(offlineUri.toString()))
@@ -2052,8 +2060,11 @@ class PlaybackQueueCoordinator(
                     } else {
                         // Other tracks in queue: restore if offline or local
                         val track = entry.track
-                        val offlineUri = downloadManager.getOfflinePlaybackUri(track.id.rawId)
-                            ?: downloadManager.getOfflinePlaybackUriForSource(track.id.rawId)
+                        val remoteSourceId = (track.source as? AudioSource.Remote)?.sourceId
+                        val offlineUri = downloadManager.resolveOfflineUri(
+                            trackId = track.id.rawId,
+                            providerSourceId = remoteSourceId
+                        )
 
                         if (offlineUri != null) {
                             val offlineTrack = track.copy(source = AudioSource.Local(offlineUri.toString()))

@@ -510,16 +510,74 @@ class OfflineDownloadManager(
         return storage.isFileValid(relativeStorageKey)
     }
 
+    fun isNetworkConnected(): Boolean {
+        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager
+            ?: return true
+        val activeNetwork = cm.activeNetwork ?: return false
+        val capabilities = cm.getNetworkCapabilities(activeNetwork) ?: return false
+        return capabilities.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
+    }
+
+    /**
+     * Resolves an offline playback URI for a track, trying candidate identifiers in order:
+     * 1. providerSourceId (e.g. YouTube video ID)
+     * 2. rawId of trackId (e.g. without provider prefix)
+     * 3. catalogTrackId
+     *
+     * Only returns COMPLETED rows whose underlying audio file exists and is non-empty (isFileValid).
+     * Supports both PINNED and SMART_OFFLINE downloads.
+     * Optionally updates lastAccessedAtEpochMs when touchAccess is true.
+     */
+    suspend fun resolveOfflineUri(
+        trackId: String? = null,
+        catalogTrackId: String? = null,
+        providerSourceId: String? = null,
+        touchAccess: Boolean = true
+    ): android.net.Uri? {
+        val rawTrackId = trackId?.let { id ->
+            val colonIndex = id.indexOf(':')
+            if (colonIndex != -1) id.substring(colonIndex + 1) else id
+        }
+        val rawCatalogId = catalogTrackId?.let { id ->
+            val colonIndex = id.indexOf(':')
+            if (colonIndex != -1) id.substring(colonIndex + 1) else id
+        }
+
+        val candidateGroups = listOfNotNull(
+            providerSourceId?.takeIf { it.isNotBlank() },
+            rawTrackId?.takeIf { it.isNotBlank() },
+            trackId?.takeIf { it.isNotBlank() && it != rawTrackId },
+            catalogTrackId?.takeIf { it.isNotBlank() && it != rawTrackId && it != trackId },
+            rawCatalogId?.takeIf { it.isNotBlank() && it != catalogTrackId && it != rawTrackId }
+        )
+
+        for (candidate in candidateGroups) {
+            val bySource = downloadDao.getCompletedForSource(candidate)
+            if (bySource != null) {
+                if (storage.isFileValid(bySource.relativeStorageKey)) {
+                    if (touchAccess) downloadDao.touchAccessTime(bySource.downloadId)
+                    return storage.getContentUri(bySource.relativeStorageKey)
+                } else {
+                    downloadDao.updateStatus(bySource.downloadId, OfflineDownloadStatus.EVICTED)
+                }
+            }
+
+            val byTrack = downloadDao.getCompletedForTrack(candidate)
+            if (byTrack != null) {
+                if (storage.isFileValid(byTrack.relativeStorageKey)) {
+                    if (touchAccess) downloadDao.touchAccessTime(byTrack.downloadId)
+                    return storage.getContentUri(byTrack.relativeStorageKey)
+                } else {
+                    downloadDao.updateStatus(byTrack.downloadId, OfflineDownloadStatus.EVICTED)
+                }
+            }
+        }
+
+        return null
+    }
+
     suspend fun getOfflinePlaybackUri(trackId: String, touchAccess: Boolean = false): android.net.Uri? {
-        val download = downloadDao.getCompletedForTrack(trackId) ?: return null
-        if (!storage.isFileValid(download.relativeStorageKey)) {
-            downloadDao.updateStatus(download.downloadId, OfflineDownloadStatus.EVICTED)
-            return null
-        }
-        if (touchAccess) {
-            downloadDao.touchAccessTime(download.downloadId)
-        }
-        return storage.getContentUri(download.relativeStorageKey)
+        return resolveOfflineUri(trackId = trackId, touchAccess = touchAccess)
     }
 
     suspend fun isTrackAvailableOffline(trackId: String): Boolean {
@@ -532,15 +590,7 @@ class OfflineDownloadManager(
     }
 
     suspend fun getOfflinePlaybackUriForSource(sourceId: String, touchAccess: Boolean = false): android.net.Uri? {
-        val download = downloadDao.getCompletedForSource(sourceId) ?: return null
-        if (!storage.isFileValid(download.relativeStorageKey)) {
-            downloadDao.updateStatus(download.downloadId, OfflineDownloadStatus.EVICTED)
-            return null
-        }
-        if (touchAccess) {
-            downloadDao.touchAccessTime(download.downloadId)
-        }
-        return storage.getContentUri(download.relativeStorageKey)
+        return resolveOfflineUri(providerSourceId = sourceId, touchAccess = touchAccess)
     }
 
     suspend fun clearAllDownloads() {

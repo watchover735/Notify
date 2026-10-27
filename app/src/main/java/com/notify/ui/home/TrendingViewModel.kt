@@ -394,6 +394,34 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _resolvingTrackId.value = resolveKey
             try {
+                // Priority 1: Check offline availability via shared helper
+                val offlineUri = downloadManager.resolveOfflineUri(
+                    trackId = track.songId.takeIf { it.isNotBlank() },
+                    providerSourceId = track.songId.takeIf { it.isNotBlank() }
+                )
+                if (offlineUri != null) {
+                    Log.i(TAG, "TRENDING_OFFLINE_HIT key=$resolveKey -> $offlineUri")
+                    val domainTrack = Track(
+                        id = TrackId(provider = ProviderId.CUSTOM_RESOLVER, rawId = resolveKey),
+                        title = track.title,
+                        artist = track.artist,
+                        album = null,
+                        durationMs = track.durationMs ?: 0L,
+                        artworkUri = track.albumArtUrl.ifBlank { null },
+                        source = AudioSource.Local(offlineUri.toString())
+                    )
+                    val contextDomainTracks = buildContextTracks(track, contextTracks)
+                    onPlayStreamWithContext(domainTrack, offlineUri.toString(), PlaybackOrigin.USER_SEARCH_SELECTION, contextDomainTracks)
+                    return@launch
+                }
+
+                if (!downloadManager.isNetworkConnected()) {
+                    Log.w(TAG, "Offline and no local file for trending track: $resolveKey")
+                    SnackbarManager.emit(SnackbarEvent.Message("Not available offline"))
+                    onError()
+                    return@launch
+                }
+
                 val query = buildJioSaavnQuery(track)
                 Log.i(TAG, "TRENDING_RESOLVE_START key=$resolveKey query=\"$query\"")
 

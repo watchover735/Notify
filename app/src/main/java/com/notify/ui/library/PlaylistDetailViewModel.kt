@@ -29,6 +29,8 @@ import com.notify.download.matcher.YouTubeCandidate
 import com.notify.download.matcher.YtDlpYouTubeSearchProvider
 import com.notify.download.spotify.SpotifyTrackMetadata
 import com.notify.download.stream.OnlineStreamResolver
+import com.notify.ui.SnackbarEvent
+import com.notify.ui.SnackbarManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -320,33 +322,25 @@ class PlaylistDetailViewModel(
         onPlayTrack: (Track) -> Unit
     ) {
         viewModelScope.launch(ioDispatcher) {
-            // Priority 1: Validated offline download
-            val completedRecord = downloadManager.getCompletedDownloadForTrack(entry.trackId)
-            if (completedRecord != null) {
-                val offlineUri = downloadManager.getOfflinePlaybackUri(entry.trackId)
-                if (offlineUri != null) {
-                    val effectiveArtwork = entry.artworkUrl?.takeIf { it.isNotBlank() }
-                        ?: entry.artworkUri?.takeIf { it.isNotBlank() }
-                    val offlineTrack = Track(
-                        id = TrackId.spotify(entry.trackId),
-                        title = entry.title,
-                        artist = entry.artist,
-                        album = entry.album,
-                        durationMs = entry.durationMs,
-                        artworkUri = effectiveArtwork,
-                        source = AudioSource.Local(offlineUri.toString())
-                    )
-                    android.util.Log.d("PlaylistDetailVM", "Offline playback: ${entry.title} via ${offlineUri.scheme}://…")
-                    kotlinx.coroutines.withContext(Dispatchers.Main) {
-                        onPlayTrack(offlineTrack)
-                    }
-                    return@launch
-                } else {
-                    _uiState.update {
-                        it.copy(playbackError = "'${entry.title}' offline file is missing. Tap the download icon to re-download.")
-                    }
-                    return@launch
+            // Priority 1: Validated offline download via shared helper
+            val offlineUri = downloadManager.resolveOfflineUri(trackId = entry.trackId)
+            if (offlineUri != null) {
+                val effectiveArtwork = entry.artworkUrl?.takeIf { it.isNotBlank() }
+                    ?: entry.artworkUri?.takeIf { it.isNotBlank() }
+                val offlineTrack = Track(
+                    id = TrackId.spotify(entry.trackId),
+                    title = entry.title,
+                    artist = entry.artist,
+                    album = entry.album,
+                    durationMs = entry.durationMs,
+                    artworkUri = effectiveArtwork,
+                    source = AudioSource.Local(offlineUri.toString())
+                )
+                android.util.Log.d("PlaylistDetailVM", "Offline playback: ${entry.title} via ${offlineUri.scheme}://…")
+                kotlinx.coroutines.withContext(Dispatchers.Main) {
+                    onPlayTrack(offlineTrack)
                 }
+                return@launch
             }
 
             // Priority 2: Legacy local file
@@ -371,6 +365,7 @@ class PlaylistDetailViewModel(
                 _uiState.update {
                     it.copy(playbackError = "Offline: '${entry.title}' is not downloaded")
                 }
+                SnackbarManager.emit(SnackbarEvent.Message("Not available offline"))
                 return@launch
             }
 
