@@ -559,9 +559,6 @@ fun LibraryScreen(
                         )
                     }
                 }
-                item(key = "developer_credit_downloads") {
-                    DeveloperCreditRow(onClick = { showCreditSheet = true })
-                }
             }
             // Case B: Filter = ARTISTS
             else if (uiState.selectedFilter == LibraryFilter.ARTISTS) {
@@ -577,9 +574,6 @@ fun LibraryScreen(
                     items(filteredArtists, key = { it.id }) { artist ->
                         ArtistListRow(artist = artist)
                     }
-                }
-                item(key = "developer_credit_artists") {
-                    DeveloperCreditRow(onClick = { showCreditSheet = true })
                 }
             }
             // Case C: Filter = ALL or PLAYLISTS

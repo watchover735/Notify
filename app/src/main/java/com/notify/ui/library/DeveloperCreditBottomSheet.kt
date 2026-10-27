@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import android.util.Log
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -123,60 +124,42 @@ fun DeveloperCreditRow(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Surface(
-        onClick = onClick,
-        shape = RoundedCornerShape(14.dp),
-        color = DarkSurfaceVariant,
-        border = BorderStroke(1.dp, EmeraldAccent.copy(alpha = 0.25f)),
+    Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 6.dp)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Left: Developer avatar (photo or "R" fallback)
-            DeveloperAvatar(size = 40.dp)
+        // 64dp Circular Avatar matching ArtistListRow
+        DeveloperAvatar(size = 64.dp)
 
-            Spacer(modifier = Modifier.width(12.dp))
+        Spacer(modifier = Modifier.width(12.dp))
 
-            // Center: Title + Blue Verified Badge + Subtitle
-            Column(modifier = Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = DeveloperConfig.DEVELOPED_BY,
-                        color = TextPrimary,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Spacer(modifier = Modifier.width(5.dp))
-                    // Blue Instagram-style verified badge
-                    Icon(
-                        imageVector = ImageVector.vectorResource(R.drawable.ic_verified_badge),
-                        contentDescription = "Verified Developer",
-                        tint = Color.Unspecified,
-                        modifier = Modifier.size(15.dp)
-                    )
-                }
-                Spacer(modifier = Modifier.height(2.dp))
+        // Center: 15sp Bold Name + Blue Verified Badge + 13sp "Developer" Subtitle
+        Column(modifier = Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = "Connect on Instagram / WhatsApp",
-                    color = TextSecondary,
-                    fontSize = 12.sp,
+                    text = "Rahul",
+                    color = TextPrimary,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
+                Spacer(modifier = Modifier.width(4.dp))
+                Icon(
+                    imageVector = ImageVector.vectorResource(R.drawable.ic_verified_badge),
+                    contentDescription = "Verified Developer",
+                    tint = Color.Unspecified,
+                    modifier = Modifier.size(15.dp)
+                )
             }
-
-            // Right: Chevron
-            Icon(
-                imageVector = Icons.Default.ChevronRight,
-                contentDescription = null,
-                tint = TextSecondary.copy(alpha = 0.6f),
-                modifier = Modifier.size(18.dp)
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "Developer",
+                color = TextSecondary,
+                fontSize = 13.sp
             )
         }
     }
