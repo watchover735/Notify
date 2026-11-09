@@ -17,6 +17,7 @@ class DownloadPreferences(context: Context) {
         private const val KEY_AUTO_SAVE_ENABLED = "auto_save_enabled"
         private const val KEY_AUTO_SAVE_THRESHOLD_MS = "auto_save_threshold_ms"
         private const val KEY_WIFI_ONLY = "wifi_only"
+        private const val KEY_SURPRISE_CACHED_PLAYBACK_ENABLED = "surprise_cached_playback_enabled"
 
         /** Default smart offline budget: 1 GB */
         const val DEFAULT_SMART_BUDGET_BYTES = 1_073_741_824L
@@ -65,4 +66,9 @@ class DownloadPreferences(context: Context) {
     var wifiOnly: Boolean
         get() = prefs.getBoolean(KEY_WIFI_ONLY, false)
         set(value) = prefs.edit().putBoolean(KEY_WIFI_ONLY, value).apply()
+
+    /** Surprise cached song in offline playlist playback: default ON. */
+    var surpriseCachedPlaybackEnabled: Boolean
+        get() = prefs.getBoolean(KEY_SURPRISE_CACHED_PLAYBACK_ENABLED, true)
+        set(value) = prefs.edit().putBoolean(KEY_SURPRISE_CACHED_PLAYBACK_ENABLED, value).apply()
 }

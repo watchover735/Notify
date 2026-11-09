@@ -119,6 +119,8 @@ class PlaybackQueueCoordinator(
     }
 
     private val downloadManager = OfflineDownloadManager(context)
+    private val downloadPreferences = com.notify.core.downloads.storage.DownloadPreferences(context)
+    val surprisePlaybackManager = SurprisePlaybackManager(context, database, downloadManager, downloadPreferences)
     private val streamResolver: AudioStreamResolver = ResolvedStreamProviderChain(context)
     private val innerTubeSearchProvider = InnerTubeYouTubeMusicSearchProvider()
     private val fallbackSearchProvider = YtDlpYouTubeSearchProvider(context)
@@ -385,6 +387,12 @@ class PlaybackQueueCoordinator(
         }
 
         radioWindowManager.reset(sessionId)
+        surprisePlaybackManager.resetSession(isPlaylist = true)
+        scope.launch(ioDispatcher) {
+            val allOffline = entries.all { isEntryAvailableOffline(it) }
+            surprisePlaybackManager.isEntirelyOfflinePlaylist = allOffline
+            Log.w("SurpriseDebug", "Decision Point [playlist offline check]: isEntirelyOffline=$allOffline (entries=${entries.size})")
+        }
 
         if (entries.isEmpty()) {
             _coordinatorState.update { CoordinatorState() }
@@ -481,6 +489,7 @@ class PlaybackQueueCoordinator(
         }
 
         radioWindowManager.reset(sessionId)
+        surprisePlaybackManager.resetSession(isPlaylist = false)
 
         _coordinatorState.update {
             it.copy(
@@ -822,6 +831,43 @@ class PlaybackQueueCoordinator(
                 }
                 val playbackOrigin = MediaItemMapper.getPlaybackOrigin(mediaItem)
                 recordSearchRecentIfEligible(matchedEntry.track, mediaItem, playbackOrigin)
+
+                // ── Task 3: Surprise Cached Song Accounting & Evaluation ──
+                if (surprisePlaybackManager.isSurpriseEntry(previousEntry)) {
+                    surprisePlaybackManager.markSurprisePlayed(previousEntry!!)
+                } else if (previousEntry != null) {
+                    surprisePlaybackManager.onRealSongCompleted(previousEntry)
+                }
+
+                if (surprisePlaybackManager.isSurpriseEntry(matchedEntry)) {
+                    // Currently playing surprise track: touch access time to protect from LRU eviction
+                    val scope = serviceScope ?: CoroutineScope(ioDispatcher)
+                    scope.launch(ioDispatcher) {
+                        downloadManager.resolveOfflineUri(
+                            trackId = matchedEntry.track.id.rawId,
+                            providerSourceId = (matchedEntry.track.source as? AudioSource.Remote)?.sourceId,
+                            touchAccess = true
+                        )
+                    }
+                } else {
+                    // Real playlist song active: evaluate if surprise should be inserted as next item
+                    val nextEntry = synchronized(queueDescriptors) { queueDescriptors.getOrNull(matchedIndex + 1) }
+                    val isRepeatOne = p?.repeatMode == Player.REPEAT_MODE_ONE
+                    val hasUpcomingSurprise = synchronized(queueDescriptors) {
+                        queueDescriptors.drop(matchedIndex + 1).any { surprisePlaybackManager.isSurpriseEntry(it) }
+                    }
+                    val shouldTrigger = surprisePlaybackManager.shouldTriggerSurprise(
+                        isNetworkConnected = isNetworkConnected(),
+                        originalPlaylistSize = originalPlaylistEntries.size,
+                        isRepeatOne = isRepeatOne,
+                        currentEntry = matchedEntry,
+                        nextEntry = nextEntry,
+                        hasUpcomingSurprise = hasUpcomingSurprise
+                    )
+                    if (shouldTrigger) {
+                        scheduleSurpriseInsertion(playbackSessionId)
+                    }
+                }
             } else {
                 Log.d(TAG, "SIDE_EFFECTS_ALREADY_PROCESSED for $sideEffectKey")
             }
@@ -1633,6 +1679,61 @@ class PlaybackQueueCoordinator(
         }
     }
 
+    private fun scheduleSurpriseInsertion(targetSessionId: Long) {
+        val scope = serviceScope ?: CoroutineScope(ioDispatcher)
+        scope.launch(ioDispatcher) {
+            if (targetSessionId != playbackSessionId) {
+                Log.w("SurpriseDebug", "Session changed before surprise candidate picked ($targetSessionId != $playbackSessionId). Aborting.")
+                return@launch
+            }
+
+            val currentQueueSnapshot = synchronized(queueDescriptors) { queueDescriptors.toList() }
+            val originalEntriesSnapshot = synchronized(originalPlaylistEntries) { originalPlaylistEntries.toList() }
+
+            val result = surprisePlaybackManager.pickSurpriseTrack(
+                currentQueue = currentQueueSnapshot,
+                originalPlaylistEntries = originalEntriesSnapshot
+            ) ?: return@launch
+
+            val (surpriseEntry, _) = result
+
+            synchronized(this@PlaybackQueueCoordinator) {
+                if (targetSessionId != playbackSessionId) {
+                    Log.w("SurpriseDebug", "Session changed during surprise insertion ($targetSessionId != $playbackSessionId). Aborting.")
+                    return@synchronized
+                }
+
+                val insertIndex = (currentIndex + 1).coerceAtMost(queueDescriptors.size)
+                queueDescriptors.add(insertIndex, surpriseEntry)
+                Log.w("SurpriseDebug", "Successfully inserted surprise track '${surpriseEntry.track.title}' at queueDescriptors[$insertIndex]. Queue size: ${queueDescriptors.size}")
+
+                nextContiguousAppendIndex = currentIndex + 1
+                resolvedLookaheadMap.clear()
+
+                val p = player
+                if (p != null) {
+                    dispatchOnPlayerLooper { activePlayer ->
+                        val count = activePlayer.mediaItemCount
+                        val cur = activePlayer.currentMediaItemIndex
+                        for (i in count - 1 downTo cur + 1) {
+                            activePlayer.removeMediaItem(i)
+                        }
+                    }
+                }
+            }
+
+            _coordinatorState.update {
+                it.copy(
+                    queue = synchronized(queueDescriptors) { queueDescriptors.toList() },
+                    currentIndex = currentIndex
+                )
+            }
+
+            persistSnapshot()
+            triggerLookaheadReplenishment(targetSessionId)
+        }
+    }
+
     // ── Descriptor Resolution Pipeline (Priorities 1 to 6) ─────────────────────
 
     private suspend fun resolveDescriptor(entry: QueueEntry, sessionId: Long): MediaItem? {
@@ -2031,7 +2132,7 @@ class PlaybackQueueCoordinator(
                 }
 
                 val targetIndex = snapshot.currentIndex.coerceIn(0, snapshot.queue.size - 1)
-                val targetPositionMs = snapshot.currentPositionMs.coerceAtLeast(0L)
+                var targetPositionMs = snapshot.currentPositionMs.coerceAtLeast(0L)
                 val targetEntry = snapshot.queue.getOrNull(targetIndex)
                 if (targetEntry == null) {
                     Log.w(TAG, "onPlaybackResumption: target entry at index $targetIndex is null")
@@ -2093,6 +2194,23 @@ class PlaybackQueueCoordinator(
                                 restoredEntries.add(entry)
                                 restoredMediaItems.add(item)
                             }
+                        }
+                    }
+                }
+
+                // If target track failed to resolve, check if it was a surprise track that was evicted/deleted while app was closed
+                if (resolvedTargetTimelineIndex < 0 && targetEntry.queueId.startsWith(SurprisePlaybackManager.SURPRISE_QUEUE_ID_PREFIX)) {
+                    Log.w("SurpriseDebug", "Resumption: saved surprise track '${targetEntry.track.title}' could not be resolved (file evicted). Advancing to next track in queue...")
+                    for (fallbackIdx in (targetIndex + 1) until snapshot.queue.size) {
+                        val fallbackEntry = snapshot.queue[fallbackIdx]
+                        val resolvedFallback = resolveDescriptor(fallbackEntry, startSessionId)
+                        if (resolvedFallback != null) {
+                            resolvedTargetTimelineIndex = restoredMediaItems.size
+                            restoredEntries.add(fallbackEntry)
+                            restoredMediaItems.add(resolvedFallback)
+                            targetPositionMs = 0L
+                            Log.w("SurpriseDebug", "Resumption fallback: successfully advanced to real song '${fallbackEntry.track.title}' at 0:00")
+                            break
                         }
                     }
                 }

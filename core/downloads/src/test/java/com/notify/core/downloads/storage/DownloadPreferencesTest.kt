@@ -28,6 +28,7 @@ class DownloadPreferencesTest {
         assertEquals(DownloadPreferences.DEFAULT_FREE_SPACE_RESERVE_BYTES, prefs.freeSpaceReserveBytes)
         assertEquals(30_000L, prefs.autoSaveThresholdMs)
         assertTrue(prefs.autoSaveEnabled)
+        assertTrue(prefs.surpriseCachedPlaybackEnabled)
         assertEquals(AudioQualityProfile.NORMAL, prefs.audioQualityProfile)
     }
 
@@ -36,12 +37,14 @@ class DownloadPreferencesTest {
         prefs.smartBudgetBytes = 500L * 1024L * 1024L
         prefs.audioQualityProfile = AudioQualityProfile.HIGH
         prefs.autoSaveEnabled = false
+        prefs.surpriseCachedPlaybackEnabled = false
         prefs.wifiOnly = true
 
         val reloaded = DownloadPreferences(context)
         assertEquals(500L * 1024L * 1024L, reloaded.smartBudgetBytes)
         assertEquals(AudioQualityProfile.HIGH, reloaded.audioQualityProfile)
         assertEquals(false, reloaded.autoSaveEnabled)
+        assertEquals(false, reloaded.surpriseCachedPlaybackEnabled)
         assertEquals(true, reloaded.wifiOnly)
     }
 }
