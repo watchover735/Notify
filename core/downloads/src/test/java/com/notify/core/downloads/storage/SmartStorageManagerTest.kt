@@ -148,6 +148,7 @@ class SmartStorageManagerTest {
         override suspend fun getCompletedForYouTubeSource(sourceId: String): OfflineDownloadEntity? = null
         override suspend fun getCompletedForProviderAndSource(provider: String, sourceId: String): OfflineDownloadEntity? = null
         override suspend fun isRecordingDownloaded(trackId: String, sourceId: String): Boolean = false
+        override suspend fun hasActiveOrCompletedDownload(trackId: String, sourceId: String): Boolean = false
         override fun observeIsRecordingDownloaded(trackId: String, sourceId: String): Flow<Boolean> = emptyFlow()
         override suspend fun updateStatus(downloadId: String, status: String, updatedAt: Long) {
             updatedStatuses[downloadId] = status
@@ -157,10 +158,12 @@ class SmartStorageManagerTest {
         override suspend fun markFailed(downloadId: String, errorMessage: String?, updatedAt: Long) {}
         override suspend fun touchAccessTime(downloadId: String, accessedAt: Long) {}
         override suspend fun updateBucket(downloadId: String, bucket: String, updatedAt: Long) {}
+        override suspend fun updateBucketAndKey(downloadId: String, bucket: String, relativeKey: String, updatedAt: Long) {}
         override fun observeCompletedDownloads(): Flow<List<OfflineDownloadEntity>> = emptyFlow()
         override suspend fun getCompletedDownloads(): List<OfflineDownloadEntity> = emptyList()
         override suspend fun getActiveDownloads(): List<OfflineDownloadEntity> = emptyList()
         override fun observeActiveDownloads(): Flow<List<OfflineDownloadEntity>> = emptyFlow()
+        override suspend fun getRecentDownloads(limit: Int): List<OfflineDownloadEntity> = emptyList()
         override suspend fun getNextPending(): OfflineDownloadEntity? = null
         override suspend fun getSmartOfflineEntriesLru(): List<OfflineDownloadEntity> = smartEntries
         override fun observeCompletedCount(): Flow<Int> = emptyFlow()
