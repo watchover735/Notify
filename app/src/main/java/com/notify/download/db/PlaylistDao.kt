@@ -47,6 +47,7 @@ interface PlaylistDao {
         INNER JOIN tracks t ON e.trackId = t.id
         LEFT JOIN track_sources ts ON ts.trackId = t.id AND ts.selected = 1
         WHERE e.playlistId = :playlistId
+        GROUP BY e.entryId
         ORDER BY e.position ASC
     """)
     suspend fun getPlaylistEntries(playlistId: String): List<PlaylistEntryWithTrack>
@@ -62,6 +63,7 @@ interface PlaylistDao {
         INNER JOIN tracks t ON e.trackId = t.id
         LEFT JOIN track_sources ts ON ts.trackId = t.id AND ts.selected = 1
         WHERE e.playlistId = :playlistId
+        GROUP BY e.entryId
         ORDER BY e.position ASC
     """)
     fun observePlaylistEntries(playlistId: String): Flow<List<PlaylistEntryWithTrack>>

@@ -470,7 +470,7 @@ fun PlaylistDetailScreen(
             } else {
                 itemsIndexed(
                     items = tracks,
-                    key = { _, entry -> "${entry.entryId}_${entry.trackId}" }
+                    key = { index, entry -> "${entry.entryId}_${entry.trackId}_$index" }
                 ) { _, entry ->
                     val isCurrentlyPlaying = playbackState.currentTrack?.id?.rawId == entry.trackId
                     val isResolvingPlayback = uiState.resolvingTrackId == entry.trackId

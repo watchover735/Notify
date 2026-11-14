@@ -97,7 +97,7 @@ fun RecentlyPlayedSection(
                 contentPadding = PaddingValues(horizontal = 20.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                items(recentTracks, key = { it.id.rawId }) { track ->
+                itemsIndexed(recentTracks, key = { index, track -> "${track.id.rawId}_$index" }) { _, track ->
                     Card(
                         onClick = { onTrackClick(track) },
                         colors = CardDefaults.cardColors(containerColor = DarkSurface),

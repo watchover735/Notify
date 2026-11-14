@@ -435,7 +435,7 @@ fun HomeScreen(
                                 contentPadding = PaddingValues(horizontal = 20.dp),
                                 horizontalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
-                                items(ts.tracks, key = { it.songId.ifBlank { it.query } }) { track ->
+                                itemsIndexed(ts.tracks, key = { index, track -> "${track.songId.ifBlank { track.query }}_$index" }) { _, track ->
                                     val trackKey = track.songId.ifBlank { track.query }
                                     TrendingCard(
                                         track = track,
@@ -576,10 +576,10 @@ fun HomeScreen(
                                         contentPadding = PaddingValues(horizontal = 20.dp),
                                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                                     ) {
-                                        items(
+                                        itemsIndexed(
                                             items = section.tracks,
-                                            key = { "${section.artistId}_${it.songId.ifBlank { it.query }}" }
-                                        ) { track ->
+                                            key = { index, it -> "${section.artistId}_${it.songId.ifBlank { it.query }}_$index" }
+                                        ) { _, track ->
                                             val trackKey = track.songId.ifBlank { track.query }
                                             TrendingCard(
                                                 track = track,
@@ -660,7 +660,7 @@ fun HomeScreen(
                                 contentPadding = PaddingValues(horizontal = 20.dp),
                                 horizontalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
-                                itemsIndexed(recentlyAdded, key = { _, item -> item.track.id.rawId }) { index, item ->
+                                itemsIndexed(recentlyAdded, key = { index, item -> "${item.track.id.rawId}_$index" }) { index, item ->
                                     Card(
                                         onClick = {
                                             val domainTracks = recentlyAdded.map { it.track }

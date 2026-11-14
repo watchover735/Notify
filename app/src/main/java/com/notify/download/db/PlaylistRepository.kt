@@ -252,11 +252,13 @@ class PlaylistRepository(
     }
 
     suspend fun getPlaylistEntries(playlistId: String): List<PlaylistEntryWithTrack> = withContext(ioDispatcher) {
-        playlistDao.getPlaylistEntries(playlistId)
+        playlistDao.getPlaylistEntries(playlistId).distinctBy { it.entryId }
     }
 
     fun observePlaylistEntries(playlistId: String): Flow<List<PlaylistEntryWithTrack>> {
-        return playlistDao.observePlaylistEntries(playlistId)
+        return playlistDao.observePlaylistEntries(playlistId).map { entries ->
+            entries.distinctBy { it.entryId }
+        }
     }
 
     suspend fun updateTrackResolution(trackId: String, state: ResolutionState) = withContext(ioDispatcher) {
